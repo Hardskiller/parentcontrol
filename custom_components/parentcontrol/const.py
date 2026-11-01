@@ -9,6 +9,10 @@ CONF_PLAYERS = "players"
 CONF_DEVICE_AGES = "device_ages"
 CONF_AGE_PROMPT = "age_prompt"
 CONF_PEDAGOGY_PROMPT = "pedagogy_prompt"
+CONF_ALLOWED = "allowed_channels"
+CONF_BLOCKED = "blocked_channels"
+CONF_DEVICE_ALLOWED = "device_allowed_channels"
+CONF_DEVICE_BLOCKED = "device_blocked_channels"
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 MAX_AGE = 18
@@ -38,11 +42,13 @@ SETTING_SEEK_TO_START = "seek_to_start"
 SETTING_REQUIRE_PEDAGOGY = "require_pedagogy"
 SETTING_BLOCK_PROFANITY = "block_profanity"
 SETTING_STRICT = "strict"
+SETTING_SKIP_CHECKS = "skip_checks"
 SETTINGS = [
     SETTING_SEEK_TO_START,
     SETTING_REQUIRE_PEDAGOGY,
     SETTING_BLOCK_PROFANITY,
     SETTING_STRICT,
+    SETTING_SKIP_CHECKS,
 ]
 
 BLOCK_AGE = "alter"
@@ -50,11 +56,18 @@ BLOCK_PEDAGOGY = "paedagogik"
 BLOCK_PROFANITY = "schimpfwoerter"
 BLOCK_NO_SUBTITLES = "keine_untertitel"
 BLOCK_UNCHECKED = "nicht_geprueft"
+BLOCK_CHANNEL = "kanal_gesperrt"
+
+LIST_ALLOWED = "freigegeben"
+LIST_BLOCKED = "gesperrt"
 
 STAT_VIDEOS = "videos"
 STAT_APPROVED = "approved"
 STAT_VALUABLE = "valuable"
 STAT_SKIPPED = "skipped"
 STATS = [STAT_VIDEOS, STAT_APPROVED, STAT_VALUABLE, STAT_SKIPPED]
+
+SERVICE_ALLOW_CHANNEL = "allow_channel"
+SERVICE_BLOCK_CHANNEL = "block_channel"
 
 EVENT_PAUSED = f"{DOMAIN}_paused"

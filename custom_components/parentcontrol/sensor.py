@@ -78,6 +78,7 @@ class StatusSensor(ParentControlSensor):
             "kanal": status.channel,
             "alter": status.age,
             "sperrgrund": status.block_reason,
+            "liste": status.list_state,
         }
         if status.rating:
             attributes |= {

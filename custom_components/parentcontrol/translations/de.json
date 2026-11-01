@@ -47,10 +47,27 @@
           "age_prompt": "Prompt für die Alterseinstufung",
           "pedagogy_prompt": "Prompt für die pädagogische Bewertung"
         }
+      },
+      "lists": {
+        "title": "Kanallisten für alle Geräte",
+        "description": "Ein Kanal pro Zeile. In der Freigabe nach einem Semikolon das Mindestalter, zum Beispiel: Die Maus; 0",
+        "data": {
+          "allowed_channels": "Freigegebene Kanäle",
+          "blocked_channels": "Gesperrte Kanäle"
+        }
+      },
+      "device_lists": {
+        "title": "Kanallisten für {device}",
+        "description": "Gilt zusätzlich zu den globalen Listen. Der Geräteeintrag geht vor, eine Sperre gewinnt immer.",
+        "data": {
+          "allowed_channels": "Freigegebene Kanäle",
+          "blocked_channels": "Gesperrte Kanäle"
+        }
       }
     },
     "error": {
-      "no_players": "Wähle mindestens einen Media Player."
+      "no_players": "Wähle mindestens einen Media Player.",
+      "invalid_age": "In der Freigabe steht ein ungültiges Alter. Erlaubt ist 0 bis 18."
     }
   },
   "entity": {
@@ -74,6 +91,9 @@
       },
       "strict": {
         "name": "Strenge Bewertung (ohne Untertitel oder Prüfergebnis blockieren)"
+      },
+      "skip_checks": {
+        "name": "Freigegebene Kanäle überspringen alle Prüfungen"
       }
     },
     "sensor": {
@@ -103,6 +123,48 @@
       },
       "watch_time": {
         "name": "Schauzeit heute"
+      }
+    }
+  },
+  "services": {
+    "allow_channel": {
+      "name": "Kanal freigeben",
+      "description": "Trägt einen Kanal in die Freigabeliste ein und entfernt ihn aus der Sperrliste.",
+      "fields": {
+        "channel": {
+          "name": "Kanal",
+          "description": "Name des Kanals. Leer nimmt den laufenden Kanal des Media Players."
+        },
+        "player": {
+          "name": "Media Player",
+          "description": "Liefert den laufenden Kanal und das Gerät für die Geräteliste."
+        },
+        "only_this_device": {
+          "name": "Nur dieses Gerät",
+          "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
+        },
+        "age": {
+          "name": "Alter",
+          "description": "Ab diesem Alter gilt die Freigabe."
+        }
+      }
+    },
+    "block_channel": {
+      "name": "Kanal sperren",
+      "description": "Trägt einen Kanal in die Sperrliste ein und entfernt ihn aus der Freigabeliste.",
+      "fields": {
+        "channel": {
+          "name": "Kanal",
+          "description": "Name des Kanals. Leer nimmt den laufenden Kanal des Media Players."
+        },
+        "player": {
+          "name": "Media Player",
+          "description": "Liefert den laufenden Kanal und das Gerät für die Geräteliste."
+        },
+        "only_this_device": {
+          "name": "Nur dieses Gerät",
+          "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
+        }
       }
     }
   }

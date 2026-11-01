@@ -9,6 +9,7 @@ Home-Assistant-Integration, die laufende YouTube-Videos mit einem lokalen Ollama
 - Überwacht beliebig viele Media Player
 - Mindestalter von 0 bis 18, mit Standardalter und optional eigenem Alter pro Gerät
 - Optional pro Gerät: an den Anfang springen, nur pädagogisch wertvolle Videos, Schimpfwörter blockieren, strenge Bewertung
+- Freigegebene und gesperrte Kanäle, global und pro Gerät, optional mit Mindestalter
 - Editierbare Prompts für Alterseinstufung und pädagogische Bewertung
 - Schauzeit pro Gerät und tägliche Videostatistik
 - Läuft auf jeder Home-Assistant-Installation, die HACS unterstützt
@@ -41,12 +42,39 @@ Jedes überwachte Gerät erscheint als eigenes Gerät unter ParentControl. Dort 
 - **Nur pädagogisch wertvoll:** blockiert auch altersgerechte Videos ohne Lernwert. Ohne Schalter wird die Bewertung nur angezeigt.
 - **Schimpfwörter blockieren:** blockiert auch altersgerechte Videos, zum Beispiel Musikvideos. Erkannt wird das über eine Wortliste im gesamten Transkript und über das Modell. Ohne Untertitel beurteilt das Modell nur Titel und Beschreibung, und Liedtexte können dann unerkannt bleiben.
 - **Strenge Bewertung:** blockiert Videos ohne Untertitel und Videos, deren Prüfung fehlgeschlagen ist, etwa wenn Ollama nicht erreichbar ist. Das trifft auch viele harmlose Videos, vor allem Musik.
+- **Freigegebene Kanäle überspringen alle Prüfungen:** Mit Schalter läuft ein freigegebener Kanal ohne Prüfung. Ohne Schalter greifen Alter und Schimpfwörter weiter, nur fehlende Untertitel und fehlender pädagogischer Wert blockieren nicht.
 - **YouTube-Prüfung:** zeigt Status, Titel, Mindestalter, Bewertungen und Begründungen.
 - **Schauzeit heute:** zählt die Minuten, in denen das Gerät abspielt, mit jeder App.
 
 Wer das Dashboard erreicht, kann diese Schalter umstellen.
 
 Fällt ein Video durch die Prüfung, wird es pausiert. Die Integration prüft das alle 3 Sekunden, solange das Video weiterläuft, und löst das Event `parentcontrol_paused` aus.
+
+## Kanallisten
+
+Die Listen bearbeitest du in den Optionen der Integration, global und pro Gerät, mit einem Kanal pro Zeile. Freigegebene Kanäle können nach einem Semikolon ein Mindestalter haben. Ohne Zahl gilt 0.
+
+```text
+Die Maus; 0
+Checker Tobi; 6
+```
+
+Namen müssen vollständig passen, ohne Rücksicht auf Groß- und Kleinschreibung, Leerzeichen und Zeichen. Für ein Gerät zählen beide Listen zusammen. Eine Sperre gewinnt immer, und bei Freigaben geht der Geräteeintrag vor dem globalen. Ist ein Kind jünger als das eingetragene Alter, wird das Video normal geprüft. Ein freigegebener Kanal gilt als Ganzes, auch für Videos, die niemand gesehen hat.
+
+Die Freigabeliste startet mit bekannten deutschen Kinderkanälen. Die Alterswerte sind Schätzungen, keine offiziellen Freigaben, und du kannst jede Zeile ändern oder löschen.
+
+Zwei Aktionen ändern die Listen ohne die Optionen: `parentcontrol.allow_channel` und `parentcontrol.block_channel`. Beide holen einen Kanal aus der jeweils anderen Liste heraus. Ohne `channel` nehmen sie den laufenden Kanal von `player`, das ergibt einen einfachen Dashboard-Knopf:
+
+```yaml
+type: button
+name: Kanal freigeben
+tap_action:
+  action: perform-action
+  perform_action: parentcontrol.allow_channel
+  data:
+    player: media_player.tv
+    age: 6
+```
 
 ## So wird geprüft
 
@@ -58,7 +86,7 @@ Die Integration sucht das Video über Titel, Kanal und Dauer, lädt Beschreibung
 - Geprüft wird nur Text, nicht das Bild.
 - Der Anfang eines Videos läuft immer ungeprüft, bis Titel und Einschätzung vorliegen.
 - Ohne strenge Bewertung läuft ein Video weiter, wenn Ollama ausfällt oder es keine Daten gibt.
-- Erfasst werden nur überwachte Media Player. Browser auf Laptops, Handys, Tablets und Spielkonsolen können die Prüfung umgehen.
+- Erfasst werden nur überwachte Media Player. Browser auf Laptops, Handys, Tablets und Spielkonsolen können die Prüfung umgehen. Die Home-Assistant-App auf dem iPhone meldet nicht, was andere Apps abspielen.
 - Das Abrufen über `yt-dlp` ist von YouTube nicht vorgesehen und kann jederzeit aufhören zu funktionieren.
 
 Die Integration ersetzt keine Aufsicht.

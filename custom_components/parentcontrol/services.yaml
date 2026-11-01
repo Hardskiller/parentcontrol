@@ -1,0 +1,32 @@
+allow_channel:
+  fields:
+    channel:
+      selector:
+        text:
+    player:
+      selector:
+        entity:
+          domain: media_player
+    age:
+      selector:
+        number:
+          min: 0
+          max: 18
+          mode: box
+    only_this_device:
+      default: false
+      selector:
+        boolean:
+block_channel:
+  fields:
+    channel:
+      selector:
+        text:
+    player:
+      selector:
+        entity:
+          domain: media_player
+    only_this_device:
+      default: false
+      selector:
+        boolean:

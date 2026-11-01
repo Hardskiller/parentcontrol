@@ -7,6 +7,7 @@ from homeassistant import config_entries
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -18,7 +19,11 @@ from custom_components.parentcontrol import engine
 from custom_components.parentcontrol.const import (
     CONF_AGE,
     CONF_AGE_PROMPT,
+    CONF_ALLOWED,
+    CONF_BLOCKED,
     CONF_DEVICE_AGES,
+    CONF_DEVICE_ALLOWED,
+    CONF_DEVICE_BLOCKED,
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
@@ -27,6 +32,7 @@ from custom_components.parentcontrol.const import (
     SETTING_BLOCK_PROFANITY,
     SETTING_REQUIRE_PEDAGOGY,
     SETTING_SEEK_TO_START,
+    SETTING_SKIP_CHECKS,
     SETTING_STRICT,
 )
 
@@ -234,6 +240,163 @@ async def test_each_player_is_its_own_device(hass, pauses):
     patcher.stop()
 
 
+async def test_default_list_applies_until_it_is_edited(hass, pauses):
+    _, mock, patcher = await setup(
+        hass, age=8, settings=[SETTING_SKIP_CHECKS]
+    )
+    await play(hass, attributes={**VIDEO, "media_artist": "Die Maus"})
+    assert not mock.called
+    assert hass.states.get(SENSOR).attributes["liste"] == "freigegeben"
+    patcher.stop()
+
+
+async def test_emptied_list_stays_empty(hass, pauses):
+    _, mock, patcher = await setup(
+        hass, age=8, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: ""}
+    )
+    await play(hass, attributes={**VIDEO, "media_artist": "Die Maus"})
+    assert mock.called
+    patcher.stop()
+
+
+async def test_blocked_channel_pauses_without_the_model(hass, pauses):
+    _, mock, patcher = await setup(hass, min_age=4, **{CONF_BLOCKED: "kanal"})
+    await play(hass)
+    assert len(pauses) == 1
+    assert not mock.called
+    state = hass.states.get(SENSOR)
+    assert state.attributes["sperrgrund"] == "kanal_gesperrt"
+    assert state.attributes["liste"] == "gesperrt"
+    assert hass.states.get("sensor.parentcontrol_skipped_today").state == "1"
+    patcher.stop()
+
+
+async def test_block_beats_allow(hass, pauses):
+    _, _, patcher = await setup(
+        hass,
+        settings=[SETTING_SKIP_CHECKS],
+        **{CONF_ALLOWED: "Kanal; 0", CONF_DEVICE_BLOCKED: {TV: "Kanal"}},
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_skip_switch_allows_channel_without_the_model(hass, pauses):
+    _, mock, patcher = await setup(
+        hass, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: "Kanal; 6"}
+    )
+    await play(hass)
+    assert not pauses
+    assert not mock.called
+    state = hass.states.get(SENSOR)
+    assert state.state == "frei"
+    assert state.attributes["quelle"] == "freigabeliste"
+    assert hass.states.get("sensor.parentcontrol_approved_today").state == "1"
+    patcher.stop()
+
+
+async def test_allowed_channel_below_its_age_gets_the_normal_check(hass, pauses):
+    _, mock, patcher = await setup(
+        hass, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: "Kanal; 12"}
+    )
+    await play(hass)
+    assert mock.called
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_device_entry_beats_global_entry(hass, pauses):
+    _, mock, patcher = await setup(
+        hass,
+        settings=[SETTING_SKIP_CHECKS],
+        **{CONF_ALLOWED: "Kanal; 12", CONF_DEVICE_ALLOWED: {TV: "Kanal; 6"}},
+    )
+    await play(hass)
+    assert not mock.called
+    assert not pauses
+    patcher.stop()
+
+
+async def test_without_skip_switch_listed_channel_ignores_only_the_gaps(hass, pauses):
+    _, _, patcher = await setup(
+        hass,
+        min_age=4,
+        source="metadaten",
+        settings=[SETTING_STRICT, SETTING_REQUIRE_PEDAGOGY],
+        **{CONF_ALLOWED: "Kanal"},
+    )
+    await play(hass)
+    assert not pauses
+    assert hass.states.get(SENSOR).attributes["liste"] == "freigegeben"
+    patcher.stop()
+
+
+async def test_without_skip_switch_listed_channel_still_fails_on_age(hass, pauses):
+    _, _, patcher = await setup(hass, **{CONF_ALLOWED: "Kanal"})
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_without_skip_switch_listed_channel_still_fails_on_swear_words(hass, pauses):
+    _, _, patcher = await setup(
+        hass,
+        min_age=4,
+        profanity=True,
+        settings=[SETTING_BLOCK_PROFANITY],
+        **{CONF_ALLOWED: "Kanal"},
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    assert hass.states.get(SENSOR).attributes["sperrgrund"] == "schimpfwoerter"
+    patcher.stop()
+
+
+async def test_failed_check_does_not_block_a_listed_channel(hass, pauses):
+    _, _, patcher = await setup(
+        hass, side_effect=OSError("weg"), settings=[SETTING_STRICT], **{CONF_ALLOWED: "Kanal"}
+    )
+    await play(hass)
+    assert not pauses
+    assert hass.states.get(SENSOR).state == "nicht_geprueft"
+    patcher.stop()
+
+
+async def test_allow_action_uses_running_channel_and_clears_the_block(hass, pauses):
+    entry, _, patcher = await setup(hass, **{CONF_BLOCKED: "Kanal"})
+    await play(hass)
+    await hass.services.async_call(
+        DOMAIN, "allow_channel", {"player": TV, "age": 6}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_ALLOWED].endswith("Kanal; 6")
+    assert "Die Maus; 5" in entry.options[CONF_ALLOWED]
+    assert entry.options[CONF_BLOCKED] == ""
+    patcher.stop()
+
+
+async def test_block_action_can_target_one_device(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4)
+    await hass.services.async_call(
+        DOMAIN,
+        "block_channel",
+        {"channel": "Neu", "player": KIDS, "only_this_device": True},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_DEVICE_BLOCKED] == {KIDS: "Neu"}
+    assert entry.options.get(CONF_BLOCKED, "") == ""
+    patcher.stop()
+
+
+async def test_action_without_channel_is_rejected(hass, pauses):
+    _, _, patcher = await setup(hass)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, "allow_channel", {}, blocking=True)
+    patcher.stop()
+
+
 async def test_statistics_count_each_video_once_per_day(hass, pauses):
     _, _, patcher = await setup(hass, min_age=4, valuable=True)
     await play(hass)
@@ -428,12 +591,28 @@ async def test_options_flow_stores_device_age(hass, aioclient_mock):
     )
     assert result["step_id"] == "ages"
     result = await hass.config_entries.options.async_configure(result["flow_id"], {KIDS: 7})
+    assert result["step_id"] == "lists"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ALLOWED: "Kanal; abc"}
+    )
+    assert result["errors"] == {CONF_ALLOWED: "invalid_age"}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_ALLOWED: "Kanal; 6", CONF_BLOCKED: "Andere"}
+    )
+    assert result["step_id"] == "device_lists"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_BLOCKED: "Nur TV"}
+    )
+    assert result["step_id"] == "device_lists"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
     assert result["step_id"] == "prompts"
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {CONF_AGE_PROMPT: "Mein Prompt"}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_DEVICE_AGES] == {KIDS: 7}
+    assert entry.options[CONF_ALLOWED] == "Kanal; 6"
+    assert entry.options[CONF_DEVICE_BLOCKED] == {TV: "Nur TV", KIDS: ""}
     assert entry.options[CONF_AGE_PROMPT] == "Mein Prompt"
     assert entry.options[CONF_PEDAGOGY_PROMPT] == engine.DEFAULT_PEDAGOGY_PROMPT
     await hass.async_block_till_done()

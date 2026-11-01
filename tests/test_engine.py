@@ -100,6 +100,41 @@ def test_system_prompt_keeps_fixed_rules_after_editing():
     assert engine.FIXED_PROMPT in prompt
 
 
+def test_parse_allowed_reads_channels_with_and_without_age():
+    text = "Die Maus; 0\n\nBobby & Max;8\nOhne Zahl\nName; mit Semikolon; 12"
+    assert engine.parse_allowed(text) == {
+        "diemaus": 0,
+        "bobbymax": 8,
+        "ohnezahl": 0,
+        "namemitsemikolon": 12,
+    }
+
+
+@pytest.mark.parametrize("line", ["Kanal; abc", "Kanal; 19", "Kanal; -1"])
+def test_parse_allowed_rejects_invalid_age(line):
+    with pytest.raises(ValueError):
+        engine.parse_allowed(line)
+
+
+def test_default_allowed_channels_are_valid():
+    channels = engine.parse_allowed(engine.DEFAULT_ALLOWED_CHANNELS)
+    assert channels["diemaus"] == 5
+    assert len(channels) == 13
+
+
+def test_parse_blocked_ignores_case_and_empty_lines():
+    assert engine.parse_blocked("Kanal XY\n\n  kanal xy  \n🧽") == {"kanalxy"}
+
+
+def test_add_channel_replaces_an_existing_line():
+    assert engine.add_channel("Die Maus; 0\nAnders", "die maus", 6) == "Anders\ndie maus; 6"
+    assert engine.add_channel("", "Neu") == "Neu"
+
+
+def test_remove_channel_keeps_other_lines():
+    assert engine.remove_channel("Die Maus; 0\nAnders", "DIE MAUS") == "Anders"
+
+
 def test_is_allowed_includes_the_exact_age():
     assert engine.is_allowed(8, 8)
     assert not engine.is_allowed(9, 8)

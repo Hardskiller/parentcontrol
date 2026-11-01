@@ -30,25 +30,33 @@ from homeassistant.util import dt as dt_util
 from . import engine
 from .const import (
     BLOCK_AGE,
+    BLOCK_CHANNEL,
     BLOCK_NO_SUBTITLES,
     BLOCK_PEDAGOGY,
     BLOCK_PROFANITY,
     BLOCK_UNCHECKED,
     CONF_AGE,
     CONF_AGE_PROMPT,
+    CONF_ALLOWED,
+    CONF_BLOCKED,
     CONF_DEVICE_AGES,
+    CONF_DEVICE_ALLOWED,
+    CONF_DEVICE_BLOCKED,
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
     CONF_PLAYERS,
     DOMAIN,
     EVENT_PAUSED,
+    LIST_ALLOWED,
+    LIST_BLOCKED,
     MAX_EVENTS,
     PAUSE_DEBOUNCE_SECONDS,
     RETRY_SECONDS,
     SETTING_BLOCK_PROFANITY,
     SETTING_REQUIRE_PEDAGOGY,
     SETTING_SEEK_TO_START,
+    SETTING_SKIP_CHECKS,
     SETTING_STRICT,
     STAT_APPROVED,
     STAT_SKIPPED,
@@ -83,6 +91,7 @@ class PlayerStatus:
     age: int | None = None
     rating: engine.Rating | None = None
     block_reason: str | None = None
+    list_state: str | None = None
 
 
 class Monitor:
@@ -97,6 +106,18 @@ class Monitor:
         self.enabled = True
         self._device_ages: dict[str, int] = entry.options.get(CONF_DEVICE_AGES, {})
         self._settings: dict[str, dict[str, bool]] = {}
+        self._allowed = engine.parse_allowed(
+            entry.options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
+        )
+        self._blocked = engine.parse_blocked(entry.options.get(CONF_BLOCKED, ""))
+        self._device_allowed = {
+            player: engine.parse_allowed(text)
+            for player, text in entry.options.get(CONF_DEVICE_ALLOWED, {}).items()
+        }
+        self._device_blocked = {
+            player: engine.parse_blocked(text)
+            for player, text in entry.options.get(CONF_DEVICE_BLOCKED, {}).items()
+        }
         self._system_prompt = engine.build_system_prompt(
             entry.options.get(CONF_AGE_PROMPT, engine.DEFAULT_AGE_PROMPT),
             entry.options.get(CONF_PEDAGOGY_PROMPT, engine.DEFAULT_PEDAGOGY_PROMPT),
@@ -161,6 +182,36 @@ class Monitor:
         self._settings.setdefault(player, {})[setting] = value
         self._save()
         self._evaluate(player)
+
+    @callback
+    def async_list_channel(
+        self, allow: bool, channel: str, age: int | None, player: str | None
+    ) -> None:
+        """Add a channel to one list and remove it from the opposite one."""
+        options = {**self.entry.options}
+        if player:
+            allowed = dict(options.get(CONF_DEVICE_ALLOWED, {}))
+            blocked = dict(options.get(CONF_DEVICE_BLOCKED, {}))
+            target, opposite = (allowed, blocked) if allow else (blocked, allowed)
+            target[player] = engine.add_channel(
+                target.get(player, ""), channel, age if allow else None
+            )
+            opposite[player] = engine.remove_channel(opposite.get(player, ""), channel)
+            options[CONF_DEVICE_ALLOWED] = allowed
+            options[CONF_DEVICE_BLOCKED] = blocked
+        else:
+            target_key, opposite_key = (
+                (CONF_ALLOWED, CONF_BLOCKED) if allow else (CONF_BLOCKED, CONF_ALLOWED)
+            )
+            lists = {
+                CONF_ALLOWED: options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS),
+                CONF_BLOCKED: options.get(CONF_BLOCKED, ""),
+            }
+            options[target_key] = engine.add_channel(
+                lists[target_key], channel, age if allow else None
+            )
+            options[opposite_key] = engine.remove_channel(lists[opposite_key], channel)
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
 
     def status(self, player: str) -> PlayerStatus:
         """Return the current result for a player."""
@@ -359,9 +410,24 @@ class Monitor:
         )
         _LOGGER.info("Pausiert auf %s: %r", player, video.title)
 
-    def _block_reason(self, player: str, rating: dict, age: int) -> str | None:
+    def _is_blocked_channel(self, player: str, channel: str) -> bool:
+        return channel in self._blocked or channel in self._device_blocked.get(player, set())
+
+    def _is_allowed_channel(self, player: str, channel: str, age: int) -> bool:
+        device = self._device_allowed.get(player, {})
+        min_age = device[channel] if channel in device else self._allowed.get(channel)
+        return min_age is not None and age >= min_age
+
+    def _block_reason(
+        self, player: str, rating: dict, age: int, listed: bool
+    ) -> str | None:
+        """Listed channels only fail on age and swear words."""
         if not engine.is_allowed(rating["min_age"], age):
             return BLOCK_AGE
+        if listed and not self.setting(player, SETTING_BLOCK_PROFANITY):
+            return None
+        if listed:
+            return BLOCK_PROFANITY if rating.get("profanity") else None
         if self.setting(player, SETTING_STRICT) and rating.get("source") != engine.SOURCE_SUBTITLES:
             return BLOCK_NO_SUBTITLES
         if self.setting(player, SETTING_BLOCK_PROFANITY) and rating.get("profanity"):
@@ -391,14 +457,50 @@ class Monitor:
             return
         video = engine.Video(title, channel, attributes.get("media_duration"))
         key = f"{title}\n{channel}\n{self._prompt_id}"
+        normalized_channel = engine.normalize(channel)
+        if self._is_blocked_channel(player, normalized_channel):
+            self._count_video(key, True, False)
+            if state.state == STATE_PLAYING:
+                self._pause(player, video, None)
+            self._publish(
+                player,
+                PlayerStatus(
+                    STATUS_BLOCKED,
+                    title,
+                    channel,
+                    age,
+                    block_reason=BLOCK_CHANNEL,
+                    list_state=LIST_BLOCKED,
+                ),
+            )
+            return
+        listed = self._is_allowed_channel(player, normalized_channel, age)
+        list_state = LIST_ALLOWED if listed else None
+        if listed and self.setting(player, SETTING_SKIP_CHECKS):
+            self._count_video(key, False, False)
+            self._publish(
+                player,
+                PlayerStatus(
+                    STATUS_FREE,
+                    title,
+                    channel,
+                    age,
+                    engine.Rating(0, "Kanal ist freigegeben.", engine.SOURCE_ALLOWLIST),
+                    list_state=list_state,
+                ),
+            )
+            return
         self._ensure_rated(key, video)
         # Background tasks start eagerly, so the rating may exist by now.
         rating = self._ratings.get(key)
         if rating is None and key in self._pending:
             self._publish(player, PlayerStatus(STATUS_CHECKING, title, channel, age))
             return
-        if rating is None and not self.setting(player, SETTING_STRICT):
-            self._publish(player, PlayerStatus(STATUS_UNCHECKED, title, channel, age))
+        if rating is None and (listed or not self.setting(player, SETTING_STRICT)):
+            self._publish(
+                player,
+                PlayerStatus(STATUS_UNCHECKED, title, channel, age, list_state=list_state),
+            )
             return
         if rating is None:
             self._count_video(key, True, False)
@@ -409,7 +511,7 @@ class Monitor:
                 PlayerStatus(STATUS_BLOCKED, title, channel, age, block_reason=BLOCK_UNCHECKED),
             )
             return
-        block_reason = self._block_reason(player, rating, age)
+        block_reason = self._block_reason(player, rating, age, listed)
         self._count_video(key, block_reason is not None, rating.get("valuable", False))
         if block_reason and state.state == STATE_PLAYING:
             self._pause(player, video, rating)
@@ -422,5 +524,6 @@ class Monitor:
                 age,
                 engine.Rating(**rating),
                 block_reason,
+                list_state,
             ),
         )

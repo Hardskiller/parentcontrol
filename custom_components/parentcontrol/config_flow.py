@@ -14,7 +14,11 @@ from . import engine
 from .const import (
     CONF_AGE,
     CONF_AGE_PROMPT,
+    CONF_ALLOWED,
+    CONF_BLOCKED,
     CONF_DEVICE_AGES,
+    CONF_DEVICE_ALLOWED,
+    CONF_DEVICE_BLOCKED,
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
@@ -40,6 +44,23 @@ async def _async_models(hass: HomeAssistant, url: str) -> list[str]:
         response.raise_for_status()
         data = await response.json()
     return sorted(model["name"] for model in data.get("models", []))
+
+
+def _list_form(allowed: str, blocked: str) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Optional(CONF_ALLOWED, description={"suggested_value": allowed}): PROMPT_SELECTOR,
+            vol.Optional(CONF_BLOCKED, description={"suggested_value": blocked}): PROMPT_SELECTOR,
+        }
+    )
+
+
+def _list_errors(user_input: dict[str, Any]) -> dict[str, str]:
+    try:
+        engine.parse_allowed(user_input.get(CONF_ALLOWED, ""))
+    except ValueError:
+        return {CONF_ALLOWED: "invalid_age"}
+    return {}
 
 
 def _player_fields(models: list[str], model: str | None, players: list[str]) -> dict:
@@ -112,6 +133,7 @@ class ParentControlOptionsFlow(OptionsFlow):
 
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}
+        self._open_players: list[str] = []
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Ask for model and players."""
@@ -134,7 +156,7 @@ class ParentControlOptionsFlow(OptionsFlow):
         if user_input is not None:
             ages = {player: int(age) for player, age in user_input.items()}
             self._options[CONF_DEVICE_AGES] = ages
-            return await self.async_step_prompts()
+            return await self.async_step_lists()
         current = self.config_entry.options.get(CONF_DEVICE_AGES, {})
         fields = {
             vol.Optional(
@@ -147,6 +169,56 @@ class ParentControlOptionsFlow(OptionsFlow):
             for player in self._options[CONF_PLAYERS]
         }
         return self.async_show_form(step_id="ages", data_schema=vol.Schema(fields))
+
+    async def async_step_lists(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Edit the lists for all devices."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = _list_errors(user_input)
+            if not errors:
+                self._options[CONF_ALLOWED] = user_input.get(CONF_ALLOWED, "")
+                self._options[CONF_BLOCKED] = user_input.get(CONF_BLOCKED, "")
+                self._options[CONF_DEVICE_ALLOWED] = {}
+                self._options[CONF_DEVICE_BLOCKED] = {}
+                self._open_players = list(self._options[CONF_PLAYERS])
+                return await self.async_step_device_lists()
+        current = user_input or self.config_entry.options
+        return self.async_show_form(
+            step_id="lists",
+            data_schema=_list_form(
+                current.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS),
+                current.get(CONF_BLOCKED, ""),
+            ),
+            errors=errors,
+        )
+
+    async def async_step_device_lists(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Edit the lists of one device, one step per device."""
+        player = self._open_players[0]
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = _list_errors(user_input)
+            if not errors:
+                self._options[CONF_DEVICE_ALLOWED][player] = user_input.get(CONF_ALLOWED, "")
+                self._options[CONF_DEVICE_BLOCKED][player] = user_input.get(CONF_BLOCKED, "")
+                self._open_players.pop(0)
+                if self._open_players:
+                    return await self.async_step_device_lists()
+                return await self.async_step_prompts()
+        current = self.config_entry.options
+        allowed = current.get(CONF_DEVICE_ALLOWED, {}).get(player, "")
+        blocked = current.get(CONF_DEVICE_BLOCKED, {}).get(player, "")
+        if user_input is not None:
+            allowed = user_input.get(CONF_ALLOWED, "")
+            blocked = user_input.get(CONF_BLOCKED, "")
+        return self.async_show_form(
+            step_id="device_lists",
+            data_schema=_list_form(allowed, blocked),
+            errors=errors,
+            description_placeholders={"device": player},
+        )
 
     async def async_step_prompts(
         self, user_input: dict[str, Any] | None = None

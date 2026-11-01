@@ -47,10 +47,27 @@
           "age_prompt": "Prompt for the age rating",
           "pedagogy_prompt": "Prompt for the educational rating"
         }
+      },
+      "lists": {
+        "title": "Channel lists for all devices",
+        "description": "One channel per line. For allowed channels, add the minimum age after a semicolon, for example: Die Maus; 0",
+        "data": {
+          "allowed_channels": "Allowed channels",
+          "blocked_channels": "Blocked channels"
+        }
+      },
+      "device_lists": {
+        "title": "Channel lists for {device}",
+        "description": "Applies on top of the global lists. The device entry comes first, and a block always wins.",
+        "data": {
+          "allowed_channels": "Allowed channels",
+          "blocked_channels": "Blocked channels"
+        }
       }
     },
     "error": {
-      "no_players": "Select at least one media player."
+      "no_players": "Select at least one media player.",
+      "invalid_age": "The allowed list contains an invalid age. Use 0 to 18."
     }
   },
   "entity": {
@@ -74,6 +91,9 @@
       },
       "strict": {
         "name": "Strict rating (block without subtitles or result)"
+      },
+      "skip_checks": {
+        "name": "Allowed channels skip all checks"
       }
     },
     "sensor": {
@@ -103,6 +123,48 @@
       },
       "watch_time": {
         "name": "Watch time today"
+      }
+    }
+  },
+  "services": {
+    "allow_channel": {
+      "name": "Allow channel",
+      "description": "Adds a channel to the allowed list and removes it from the blocked list.",
+      "fields": {
+        "channel": {
+          "name": "Channel",
+          "description": "Channel name. Empty uses the channel running on the media player."
+        },
+        "player": {
+          "name": "Media player",
+          "description": "Provides the running channel and the device for the device list."
+        },
+        "only_this_device": {
+          "name": "Only this device",
+          "description": "Adds the channel to the device list instead of the global list."
+        },
+        "age": {
+          "name": "Age",
+          "description": "The channel is allowed from this age."
+        }
+      }
+    },
+    "block_channel": {
+      "name": "Block channel",
+      "description": "Adds a channel to the blocked list and removes it from the allowed list.",
+      "fields": {
+        "channel": {
+          "name": "Channel",
+          "description": "Channel name. Empty uses the channel running on the media player."
+        },
+        "player": {
+          "name": "Media player",
+          "description": "Provides the running channel and the device for the device list."
+        },
+        "only_this_device": {
+          "name": "Only this device",
+          "description": "Adds the channel to the device list instead of the global list."
+        }
       }
     }
   }

@@ -1,15 +1,31 @@
 """ParentControl: rates running YouTube videos and pauses unsuitable ones."""
 from __future__ import annotations
 
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 
-from .const import DOMAIN
+from .const import DOMAIN, MAX_AGE, SERVICE_ALLOW_CHANNEL, SERVICE_BLOCK_CHANNEL
 from .monitor import Monitor
 
 PLATFORMS = [Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
+
+ATTR_AGE = "age"
+ATTR_CHANNEL = "channel"
+ATTR_ONLY_THIS_DEVICE = "only_this_device"
+ATTR_PLAYER = "player"
+SERVICE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_CHANNEL): cv.string,
+        vol.Optional(ATTR_PLAYER): cv.entity_id,
+        vol.Optional(ATTR_AGE): vol.All(vol.Coerce(int), vol.Range(min=0, max=MAX_AGE)),
+        vol.Optional(ATTR_ONLY_THIS_DEVICE, default=False): cv.boolean,
+    }
+)
 
 type ParentControlConfigEntry = ConfigEntry[Monitor]
 
@@ -48,6 +64,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ParentControlConfigEntry
     monitor.async_start()
     entry.async_on_unload(monitor.async_stop)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
+
+    async def async_list_channel(call: ServiceCall) -> None:
+        """Add a channel, by default the one running on the given player."""
+        player = call.data.get(ATTR_PLAYER)
+        if player and player not in monitor.players:
+            raise ServiceValidationError(f"{player} wird nicht überwacht")
+        channel = call.data.get(ATTR_CHANNEL) or (monitor.status(player).channel if player else None)
+        if not channel:
+            raise ServiceValidationError("Kein Kanal angegeben oder gerade aktiv")
+        only_this_device = call.data[ATTR_ONLY_THIS_DEVICE]
+        if only_this_device and not player:
+            raise ServiceValidationError("Für ein einzelnes Gerät fehlt der Player")
+        monitor.async_list_channel(
+            call.service == SERVICE_ALLOW_CHANNEL,
+            channel,
+            call.data.get(ATTR_AGE),
+            player if only_this_device else None,
+        )
+
+    for service in (SERVICE_ALLOW_CHANNEL, SERVICE_BLOCK_CHANNEL):
+        hass.services.async_register(DOMAIN, service, async_list_channel, SERVICE_SCHEMA)
+        entry.async_on_unload(lambda name=service: hass.services.async_remove(DOMAIN, name))
     return True
 
 

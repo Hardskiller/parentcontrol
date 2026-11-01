@@ -9,6 +9,7 @@ Home Assistant integration that estimates a minimum age for running YouTube vide
 - Monitors any number of media players
 - Minimum age from 0 to 18, with a default age and an optional age per device
 - Optional per device: jump to the start, educational videos only, block swear words, strict rating
+- Allowed and blocked channels, globally and per device, with an optional minimum age
 - Editable prompts for the age rating and the educational rating
 - Watch time per device and daily video statistics
 - Runs on any Home Assistant installation that supports HACS
@@ -41,12 +42,39 @@ Each monitored player appears as its own device under ParentControl, with these 
 - **Educational only:** also blocks age-appropriate videos without learning value. When off, the rating is only shown.
 - **Block swear words:** also blocks age-appropriate videos, for example music videos. Detection uses a word list on the full transcript and the model. Without subtitles the model only sees title and description, so lyrics can go unnoticed.
 - **Strict rating:** blocks videos without subtitles and videos whose check failed, for example when Ollama is unreachable. This also hits many harmless videos, especially music.
+- **Allowed channels skip all checks:** when on, an allowed channel plays without any check. When off, it is still checked for age and swear words, but missing subtitles and missing educational value don't block it.
 - **YouTube check:** shows status, title, minimum age, ratings, and reasons.
 - **Watch time today:** counts the minutes the device is playing, in any app.
 
 Anyone with access to the dashboard can change these switches.
 
 If a video fails the check, it is paused. The integration checks this every 3 seconds while the video keeps playing and fires the `parentcontrol_paused` event.
+
+## Channel lists
+
+You edit the lists in the integration options, globally and per device, with one channel per line. Allowed channels can have a minimum age after a semicolon. Without a number the age is 0.
+
+```text
+Die Maus; 0
+Checker Tobi; 6
+```
+
+Names must match completely, ignoring case, spaces, and symbols. Both lists count together for a device. A block always wins, and for allowed channels the device entry comes before the global one. If a child is younger than the listed age, the video gets the normal check. An allowed channel is trusted as a whole, including videos nobody has reviewed.
+
+The allowed list starts with well-known German children's channels. Their ages are estimates, not official ratings, and you can change or delete every line.
+
+Two actions change the lists without opening the options: `parentcontrol.allow_channel` and `parentcontrol.block_channel`. Each moves a channel from the opposite list. Without `channel` they use the channel running on `player`, which makes a dashboard button easy:
+
+```yaml
+type: button
+name: Allow channel
+tap_action:
+  action: perform-action
+  perform_action: parentcontrol.allow_channel
+  data:
+    player: media_player.tv
+    age: 6
+```
 
 ## How it works
 
@@ -58,7 +86,7 @@ The integration finds the video by title, channel, and duration, loads the descr
 - Only text is checked, not the picture.
 - The start of a video always plays unchecked until title and rating are available.
 - Without strict rating, a video keeps playing when Ollama fails or no data is available.
-- Only monitored media players are covered. Browsers on laptops, phones, tablets, and game consoles can bypass the check.
+- Only monitored media players are covered. Browsers on laptops, phones, tablets, and game consoles can bypass the check. The Home Assistant app on iPhone doesn't report what other apps play.
 - Fetching data with `yt-dlp` isn't intended by YouTube and can stop working at any time.
 
 This integration doesn't replace supervision.
