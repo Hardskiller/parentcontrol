@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ollama-Server",
+        "data": { "ollama_url": "Adresse des Ollama-Servers" }
+      },
+      "settings": {
+        "title": "Prüfung einrichten",
+        "data": {
+          "model": "Modell",
+          "players": "Überwachte Media Player",
+          "age": "Standardalter"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Der Ollama-Server ist nicht erreichbar.",
+      "no_models": "Auf dem Ollama-Server ist kein Modell installiert.",
+      "no_players": "Wähle mindestens einen Media Player."
+    },
+    "abort": {
+      "single_instance_allowed": "ParentControl ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Prüfung ändern",
+        "data": {
+          "model": "Modell",
+          "players": "Überwachte Media Player"
+        }
+      },
+      "ages": {
+        "title": "Eigenes Alter pro Gerät",
+        "description": "Leer lassen, damit das Standardalter gilt."
+      }
+    },
+    "error": {
+      "no_players": "Wähle mindestens einen Media Player."
+    }
+  },
+  "entity": {
+    "number": {
+      "age": { "name": "Standardalter" }
+    },
+    "switch": {
+      "check": { "name": "Prüfung" }
+    },
+    "sensor": {
+      "status": {
+        "state": {
+          "blockiert": "Blockiert",
+          "wird_geprueft": "Wird geprüft",
+          "aus": "Prüfung aus",
+          "frei": "Frei",
+          "inaktiv": "Inaktiv",
+          "keine_daten": "Keine Daten",
+          "nicht_geprueft": "Nicht geprüft"
+        }
+      }
+    }
+  }
+}

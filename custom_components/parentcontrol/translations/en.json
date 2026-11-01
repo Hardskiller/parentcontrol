@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ollama server",
+        "data": { "ollama_url": "Ollama server address" }
+      },
+      "settings": {
+        "title": "Set up the check",
+        "data": {
+          "model": "Model",
+          "players": "Monitored media players",
+          "age": "Default age"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "The Ollama server cannot be reached.",
+      "no_models": "No model is installed on the Ollama server.",
+      "no_players": "Select at least one media player."
+    },
+    "abort": {
+      "single_instance_allowed": "ParentControl is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Change the check",
+        "data": {
+          "model": "Model",
+          "players": "Monitored media players"
+        }
+      },
+      "ages": {
+        "title": "Own age per device",
+        "description": "Leave empty to use the default age."
+      }
+    },
+    "error": {
+      "no_players": "Select at least one media player."
+    }
+  },
+  "entity": {
+    "number": {
+      "age": { "name": "Default age" }
+    },
+    "switch": {
+      "check": { "name": "Check" }
+    },
+    "sensor": {
+      "status": {
+        "state": {
+          "blockiert": "Blocked",
+          "wird_geprueft": "Checking",
+          "aus": "Check off",
+          "frei": "Allowed",
+          "inaktiv": "Inactive",
+          "keine_daten": "No data",
+          "nicht_geprueft": "Unchecked"
+        }
+      }
+    }
+  }
+}
