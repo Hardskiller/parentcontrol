@@ -10,11 +10,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from . import engine
 from .const import (
     CONF_AGE,
+    CONF_AGE_PROMPT,
     CONF_DEVICE_AGES,
     CONF_MODEL,
     CONF_OLLAMA_URL,
+    CONF_PEDAGOGY_PROMPT,
     CONF_PLAYERS,
     DEFAULT_OLLAMA_URL,
     DOMAIN,
@@ -22,6 +25,7 @@ from .const import (
 )
 
 TIMEOUT = aiohttp.ClientTimeout(total=10)
+PROMPT_SELECTOR = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
 AGE_SELECTOR = selector.NumberSelector(
     selector.NumberSelectorConfig(
         min=0, max=MAX_AGE, step=1, mode=selector.NumberSelectorMode.SLIDER
@@ -129,7 +133,8 @@ class ParentControlOptionsFlow(OptionsFlow):
         """Ask for optional ages. An empty field means the default age applies."""
         if user_input is not None:
             ages = {player: int(age) for player, age in user_input.items()}
-            return self.async_create_entry(data={**self._options, CONF_DEVICE_AGES: ages})
+            self._options[CONF_DEVICE_AGES] = ages
+            return await self.async_step_prompts()
         current = self.config_entry.options.get(CONF_DEVICE_AGES, {})
         fields = {
             vol.Optional(
@@ -142,3 +147,36 @@ class ParentControlOptionsFlow(OptionsFlow):
             for player in self._options[CONF_PLAYERS]
         }
         return self.async_show_form(step_id="ages", data_schema=vol.Schema(fields))
+
+    async def async_step_prompts(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show the prompts. An empty field restores the default text."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    **self._options,
+                    CONF_AGE_PROMPT: user_input.get(CONF_AGE_PROMPT)
+                    or engine.DEFAULT_AGE_PROMPT,
+                    CONF_PEDAGOGY_PROMPT: user_input.get(CONF_PEDAGOGY_PROMPT)
+                    or engine.DEFAULT_PEDAGOGY_PROMPT,
+                }
+            )
+        current = self.config_entry.options
+        fields = {
+            vol.Optional(
+                CONF_AGE_PROMPT,
+                description={
+                    "suggested_value": current.get(CONF_AGE_PROMPT, engine.DEFAULT_AGE_PROMPT)
+                },
+            ): PROMPT_SELECTOR,
+            vol.Optional(
+                CONF_PEDAGOGY_PROMPT,
+                description={
+                    "suggested_value": current.get(
+                        CONF_PEDAGOGY_PROMPT, engine.DEFAULT_PEDAGOGY_PROMPT
+                    )
+                },
+            ): PROMPT_SELECTOR,
+        }
+        return self.async_show_form(step_id="prompts", data_schema=vol.Schema(fields))

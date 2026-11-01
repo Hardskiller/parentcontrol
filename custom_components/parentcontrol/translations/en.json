@@ -3,10 +3,14 @@
     "step": {
       "user": {
         "title": "Ollama server",
-        "data": { "ollama_url": "Ollama server address" }
+        "description": "ParentControl rates running YouTube videos with a local Ollama model and pauses unsuitable ones. Afterwards each device gets switches for jumping to the start, educational value, swear words, and strict rating.",
+        "data": {
+          "ollama_url": "Ollama server address"
+        }
       },
       "settings": {
         "title": "Set up the check",
+        "description": "The rating comes from a language model and is not an official age rating.",
         "data": {
           "model": "Model",
           "players": "Monitored media players",
@@ -35,6 +39,14 @@
       "ages": {
         "title": "Own age per device",
         "description": "Leave empty to use the default age."
+      },
+      "prompts": {
+        "title": "Prompts",
+        "description": "An empty field restores the default text. After a change, videos are checked again.",
+        "data": {
+          "age_prompt": "Prompt for the age rating",
+          "pedagogy_prompt": "Prompt for the educational rating"
+        }
       }
     },
     "error": {
@@ -43,13 +55,30 @@
   },
   "entity": {
     "number": {
-      "age": { "name": "Default age" }
+      "age": {
+        "name": "Default age"
+      }
     },
     "switch": {
-      "check": { "name": "Check" }
+      "check": {
+        "name": "Check"
+      },
+      "seek_to_start": {
+        "name": "Jump to start"
+      },
+      "require_pedagogy": {
+        "name": "Educational only"
+      },
+      "block_profanity": {
+        "name": "Block swear words"
+      },
+      "strict": {
+        "name": "Strict rating (block without subtitles or result)"
+      }
     },
     "sensor": {
       "status": {
+        "name": "YouTube check",
         "state": {
           "blockiert": "Blocked",
           "wird_geprueft": "Checking",
@@ -59,6 +88,21 @@
           "keine_daten": "No data",
           "nicht_geprueft": "Unchecked"
         }
+      },
+      "videos": {
+        "name": "Videos today"
+      },
+      "approved": {
+        "name": "Approved today"
+      },
+      "valuable": {
+        "name": "Educational today"
+      },
+      "skipped": {
+        "name": "Skipped today"
+      },
+      "watch_time": {
+        "name": "Watch time today"
       }
     }
   }

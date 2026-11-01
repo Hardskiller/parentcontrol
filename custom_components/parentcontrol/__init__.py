@@ -23,6 +23,22 @@ def device_info(entry: ConfigEntry) -> DeviceInfo:
     )
 
 
+def player_name(hass: HomeAssistant, player: str) -> str:
+    """Return the readable name of a media player."""
+    state = hass.states.get(player)
+    return state.name if state else player.split(".", 1)[1]
+
+
+def player_device_info(hass: HomeAssistant, entry: ConfigEntry, player: str) -> DeviceInfo:
+    """Group the entities of one media player."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{entry.entry_id}_{player}")},
+        name=f"ParentControl {player_name(hass, player)}",
+        entry_type=DeviceEntryType.SERVICE,
+        via_device=(DOMAIN, entry.entry_id),
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ParentControlConfigEntry) -> bool:
     """Set up ParentControl."""
     monitor = Monitor(hass, entry)

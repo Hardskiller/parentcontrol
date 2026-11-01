@@ -7,6 +7,8 @@ CONF_MODEL = "model"
 CONF_OLLAMA_URL = "ollama_url"
 CONF_PLAYERS = "players"
 CONF_DEVICE_AGES = "device_ages"
+CONF_AGE_PROMPT = "age_prompt"
+CONF_PEDAGOGY_PROMPT = "pedagogy_prompt"
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 MAX_AGE = 18
@@ -31,5 +33,28 @@ STATUSES = [
     STATUS_NO_DATA,
     STATUS_UNCHECKED,
 ]
+
+SETTING_SEEK_TO_START = "seek_to_start"
+SETTING_REQUIRE_PEDAGOGY = "require_pedagogy"
+SETTING_BLOCK_PROFANITY = "block_profanity"
+SETTING_STRICT = "strict"
+SETTINGS = [
+    SETTING_SEEK_TO_START,
+    SETTING_REQUIRE_PEDAGOGY,
+    SETTING_BLOCK_PROFANITY,
+    SETTING_STRICT,
+]
+
+BLOCK_AGE = "alter"
+BLOCK_PEDAGOGY = "paedagogik"
+BLOCK_PROFANITY = "schimpfwoerter"
+BLOCK_NO_SUBTITLES = "keine_untertitel"
+BLOCK_UNCHECKED = "nicht_geprueft"
+
+STAT_VIDEOS = "videos"
+STAT_APPROVED = "approved"
+STAT_VALUABLE = "valuable"
+STAT_SKIPPED = "skipped"
+STATS = [STAT_VIDEOS, STAT_APPROVED, STAT_VALUABLE, STAT_SKIPPED]
 
 EVENT_PAUSED = f"{DOMAIN}_paused"

@@ -3,10 +3,14 @@
     "step": {
       "user": {
         "title": "Ollama-Server",
-        "data": { "ollama_url": "Adresse des Ollama-Servers" }
+        "description": "ParentControl stuft laufende YouTube-Videos mit einem lokalen Ollama-Modell ein und pausiert ungeeignete Videos. Pro Gerät lassen sich danach Schalter für Sprung an den Anfang, pädagogischen Wert, Schimpfwörter und strenge Bewertung setzen.",
+        "data": {
+          "ollama_url": "Adresse des Ollama-Servers"
+        }
       },
       "settings": {
         "title": "Prüfung einrichten",
+        "description": "Die Einschätzung stammt von einem Sprachmodell und ist keine offizielle Altersfreigabe.",
         "data": {
           "model": "Modell",
           "players": "Überwachte Media Player",
@@ -35,6 +39,14 @@
       "ages": {
         "title": "Eigenes Alter pro Gerät",
         "description": "Leer lassen, damit das Standardalter gilt."
+      },
+      "prompts": {
+        "title": "Prompts",
+        "description": "Ein leeres Feld stellt den Standardtext wieder her. Nach einer Änderung werden Videos neu geprüft.",
+        "data": {
+          "age_prompt": "Prompt für die Alterseinstufung",
+          "pedagogy_prompt": "Prompt für die pädagogische Bewertung"
+        }
       }
     },
     "error": {
@@ -43,13 +55,30 @@
   },
   "entity": {
     "number": {
-      "age": { "name": "Standardalter" }
+      "age": {
+        "name": "Standardalter"
+      }
     },
     "switch": {
-      "check": { "name": "Prüfung" }
+      "check": {
+        "name": "Prüfung"
+      },
+      "seek_to_start": {
+        "name": "An den Anfang springen"
+      },
+      "require_pedagogy": {
+        "name": "Nur pädagogisch wertvoll"
+      },
+      "block_profanity": {
+        "name": "Schimpfwörter blockieren"
+      },
+      "strict": {
+        "name": "Strenge Bewertung (ohne Untertitel oder Prüfergebnis blockieren)"
+      }
     },
     "sensor": {
       "status": {
+        "name": "YouTube-Prüfung",
         "state": {
           "blockiert": "Blockiert",
           "wird_geprueft": "Wird geprüft",
@@ -59,6 +88,21 @@
           "keine_daten": "Keine Daten",
           "nicht_geprueft": "Nicht geprüft"
         }
+      },
+      "videos": {
+        "name": "Videos heute"
+      },
+      "approved": {
+        "name": "Genehmigt heute"
+      },
+      "valuable": {
+        "name": "Pädagogisch wertvoll heute"
+      },
+      "skipped": {
+        "name": "Geskippt heute"
+      },
+      "watch_time": {
+        "name": "Schauzeit heute"
       }
     }
   }
