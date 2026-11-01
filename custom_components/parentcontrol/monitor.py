@@ -4,13 +4,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_STANDBY, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.storage import Store
 
 from . import engine
@@ -39,6 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 
 INACTIVE_STATES = {STATE_OFF, STATE_STANDBY, STATE_UNAVAILABLE, STATE_UNKNOWN}
 SAVE_DELAY_SECONDS = 5
+ENFORCE_INTERVAL = timedelta(seconds=3)
 
 
 @dataclass(frozen=True)
@@ -71,7 +78,7 @@ class Monitor:
         self._failed: dict[str, float] = {}
         self._last_pause: dict[str, float] = {}
         self._semaphore = asyncio.Semaphore(1)
-        self._unsubscribe = None
+        self._unsubscribe: list[Callable[[], None]] = []
 
     async def async_load(self) -> None:
         """Restore age, switch, ratings and the protocol."""
@@ -84,17 +91,20 @@ class Monitor:
     @callback
     def async_start(self) -> None:
         """Start following the players."""
-        self._unsubscribe = async_track_state_change_event(
-            self.hass, self.players, self._state_changed
-        )
+        self._unsubscribe = [
+            async_track_state_change_event(self.hass, self.players, self._state_changed),
+            # Cast reports play and pause within a second. Without its own timer
+            # a blocked video keeps running when the last report gets debounced.
+            async_track_time_interval(self.hass, self._interval, ENFORCE_INTERVAL),
+        ]
         self.async_evaluate_all()
 
     @callback
     def async_stop(self) -> None:
         """Stop following the players."""
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
+        for unsubscribe in self._unsubscribe:
+            unsubscribe()
+        self._unsubscribe = []
 
     def status(self, player: str) -> PlayerStatus:
         """Return the current result for a player."""
@@ -123,6 +133,10 @@ class Monitor:
     @callback
     def _state_changed(self, event: Event[EventStateChangedData]) -> None:
         self._evaluate(event.data["entity_id"])
+
+    @callback
+    def _interval(self, _now: datetime) -> None:
+        self.async_evaluate_all()
 
     @callback
     def _save(self) -> None:
@@ -192,6 +206,16 @@ class Monitor:
             self._pending.discard(key)
         self.async_evaluate_all()
 
+    async def _async_stop_video(self, player: str) -> None:
+        """Go back to the start and pause; not every player can seek."""
+        for service, data in (("media_seek", {"seek_position": 0}), ("media_pause", {})):
+            try:
+                await self.hass.services.async_call(
+                    "media_player", service, {"entity_id": player, **data}, blocking=True
+                )
+            except HomeAssistantError as err:
+                _LOGGER.debug("%s auf %s fehlgeschlagen: %s", service, player, err)
+
     @callback
     def _pause(self, player: str, video: engine.Video, rating: dict) -> None:
         # A player reports several updates per play, each must not count twice.
@@ -199,11 +223,7 @@ class Monitor:
         if now - self._last_pause.get(player, -PAUSE_DEBOUNCE_SECONDS) < PAUSE_DEBOUNCE_SECONDS:
             return
         self._last_pause[player] = now
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                "media_player", "media_pause", {"entity_id": player}
-            )
-        )
+        self.hass.async_create_task(self._async_stop_video(player))
         self._log_event("pausiert", video, rating)
         self.hass.bus.async_fire(
             EVENT_PAUSED,

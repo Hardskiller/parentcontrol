@@ -6,7 +6,11 @@ from homeassistant import config_entries
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+    async_mock_service,
+)
 
 from custom_components.parentcontrol import engine
 from custom_components.parentcontrol.const import (
@@ -79,6 +83,28 @@ async def test_blocked_video_is_paused_again_after_every_play(hass, pauses, free
     assert len(pauses) == 1
     freezer.tick(5)
     await play(hass)
+    assert len(pauses) == 2
+    patcher.stop()
+
+
+async def test_blocked_video_goes_back_to_the_start(hass, pauses):
+    seeks = async_mock_service(hass, "media_player", "media_seek")
+    _, _, patcher = await setup(hass)
+    await play(hass)
+    assert seeks[0].data["seek_position"] == 0
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_timer_pauses_when_the_last_play_report_was_debounced(hass, pauses, freezer):
+    _, _, patcher = await setup(hass)
+    await play(hass)
+    await play(hass, "paused")
+    await play(hass)
+    assert len(pauses) == 1
+    freezer.tick(5)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
     assert len(pauses) == 2
     patcher.stop()
 

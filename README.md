@@ -22,7 +22,7 @@ Home-Assistant-Integration, die laufende YouTube-Videos mit einem lokalen Ollama
 - **Prüfung:** Schalter, der die Prüfung für alle Geräte abschaltet.
 - **YouTube-Prüfung (Sensor pro Gerät):** zeigt Status, Titel, Mindestalter und Begründung.
 
-Liegt das Mindestalter über dem Alter, wird das Video pausiert, bei jedem erneuten Play wieder. Dabei wird das Event `parentcontrol_paused` ausgelöst.
+Liegt das Mindestalter über dem Alter, springt das Video an den Anfang, sofern das Gerät das kann, und wird pausiert. Die Integration prüft das alle 3 Sekunden, solange das Video weiterläuft. Dabei wird das Event `parentcontrol_paused` ausgelöst.
 
 ## So wird geprüft
 
