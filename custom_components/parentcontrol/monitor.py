@@ -110,7 +110,7 @@ from .const import (
     WINDOW_WEEKEND_START,
 )
 from .pinlock import PinLock
-from .profiles import Rules, minutes_to_end, in_window, profile_rules
+from .profiles import Rules, in_window, minutes_to_end, profile_rules
 
 _LOGGER = logging.getLogger(__name__)
 

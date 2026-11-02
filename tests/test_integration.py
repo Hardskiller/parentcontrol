@@ -11,8 +11,8 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -923,7 +923,7 @@ async def test_profile_age_entity_needs_the_pin_to_raise(hass, pauses):
 
 
 async def test_shorts_are_blocked_before_the_rating(hass, pauses):
-    _, mock, patcher = await setup(hass, min_age=4, short=True)
+    _, _, patcher = await setup(hass, min_age=4, short=True)
     await play(hass)
     assert len(pauses) == 1
     state = hass.states.get(SENSOR)
@@ -1067,7 +1067,7 @@ async def test_allowed_video_has_no_block_text(hass, pauses):
 
 
 async def test_history_size_comes_from_the_options(hass, pauses):
-    entry, _, patcher = await setup(hass, min_age=4, **{CONF_HISTORY_SIZE: 5})
+    _, _, patcher = await setup(hass, min_age=4, **{CONF_HISTORY_SIZE: 5})
     for number in range(8):
         await play(hass, attributes={**VIDEO, "media_title": f"Video {number}"})
     videos = hass.states.get(HISTORY).attributes["videos"]
@@ -1144,7 +1144,7 @@ async def select(hass, option, context=None):
 
 
 async def test_shared_device_uses_the_youngest_age_and_any_block(hass, pauses):
-    entry, _, patcher = await setup_shared(hass, min_age=10, age=8)
+    _, _, patcher = await setup_shared(hass, min_age=10, age=8)
     await play(hass)
     assert len(pauses) == 1
     assert hass.states.get(SENSOR).attributes["alter"] == 8
@@ -1328,7 +1328,7 @@ async def test_allowing_a_word_needs_the_pin_and_taking_it_back_does_not(hass, p
 
 
 async def test_inheriting_global_lists_again_needs_the_pin(hass, pauses):
-    entry, _, patcher = await setup(hass)
+    _, _, patcher = await setup(hass)
     context = await child_context(hass)
     switch = "switch.parentcontrol_kind_inherit_global_allowed_channels"
     await hass.services.async_call("switch", "turn_off", {ATTR_ENTITY_ID: switch}, blocking=True, context=context)
@@ -1534,7 +1534,7 @@ async def test_other_apps_do_not_count_for_the_limit(hass, pauses, freezer):
 
 async def test_allowed_video_plays_on_for_the_children_watching(hass, pauses):
     plays = async_mock_service(hass, "media_player", "media_play")
-    entry, _, patcher = await setup(hass)
+    _, _, patcher = await setup(hass)
     await play(hass)
     assert len(pauses) == 1
     context = await child_context(hass)
@@ -1627,7 +1627,7 @@ async def test_week_keeps_seven_days(hass, pauses, freezer):
 
 
 async def test_changed_limit_shows_at_once_in_remaining_time(hass, pauses):
-    entry, _, patcher = await setup(hass)
+    _, _, patcher = await setup(hass)
     remaining = unique(hass, "sensor", "profile_kind_remaining")
     assert hass.states.get(remaining).state == "unknown"
     await hass.services.async_call(
@@ -1747,8 +1747,9 @@ async def test_older_entry_keeps_its_own_word_list(hass, pauses):
 
 
 async def test_card_becomes_a_versioned_dashboard_resource(hass):
-    from homeassistant.setup import async_setup_component
     from homeassistant.components.lovelace.const import LOVELACE_DATA
+    from homeassistant.setup import async_setup_component
+
     from custom_components.parentcontrol import _async_register_resource
 
     assert await async_setup_component(hass, "lovelace", {})
@@ -1764,6 +1765,7 @@ async def test_card_becomes_a_versioned_dashboard_resource(hass):
 
 async def test_yaml_dashboards_keep_their_resources(hass):
     from homeassistant.setup import async_setup_component
+
     from custom_components.parentcontrol import _async_register_resource
 
     assert await async_setup_component(hass, "lovelace", {"lovelace": {"resource_mode": "yaml"}})

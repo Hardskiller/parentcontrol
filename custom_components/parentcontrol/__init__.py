@@ -147,7 +147,7 @@ async def _async_register_resource(hass: HomeAssistant, url: str | None) -> bool
     Returns False when the dashboards are in YAML mode.
     """
     # Imported here, because tests run without the frontend.
-    from homeassistant.components.lovelace.const import LOVELACE_DATA  # noqa: PLC0415
+    from homeassistant.components.lovelace.const import LOVELACE_DATA
 
     data = hass.data.get(LOVELACE_DATA)
     if data is None or data.resource_mode != "storage":
@@ -172,8 +172,8 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     if hass.http is None or "frontend" not in hass.config.components:
         return
     # Imported here, because tests run without the frontend.
-    from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
-    from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
+    from homeassistant.components.frontend import add_extra_js_url
+    from homeassistant.components.http import StaticPathConfig
 
     flags = hass.data.setdefault(f"{DOMAIN}_card", {})
     if flags.get("registered"):

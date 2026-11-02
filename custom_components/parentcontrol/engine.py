@@ -297,17 +297,17 @@ def build_system_prompt(age_prompt: str, pedagogy_prompt: str) -> str:
 
 
 def parse_rating(content: str) -> tuple[int, str, bool, str, bool, list[str]]:
-    """Validate the model's answer."""
+    """Validate the model's answer. Raises ValueError, which callers treat as a failed rating."""
     data = json.loads(content)
     min_age = data.get("mindestalter")
     if not isinstance(min_age, int) or isinstance(min_age, bool) or not 0 <= min_age <= MAX_AGE:
         raise ValueError(f"Ungültiges Mindestalter: {min_age!r}")
     valuable = data.get("paedagogisch_wertvoll")
     if not isinstance(valuable, bool):
-        raise ValueError(f"Ungültige pädagogische Bewertung: {valuable!r}")
+        raise ValueError(f"Ungültige pädagogische Bewertung: {valuable!r}")  # noqa: TRY004
     profanity = data.get("enthaelt_schimpfwoerter")
     if not isinstance(profanity, bool):
-        raise ValueError(f"Ungültige Schimpfwort-Angabe: {profanity!r}")
+        raise ValueError(f"Ungültige Schimpfwort-Angabe: {profanity!r}")  # noqa: TRY004
     pedagogy_reason = str(data.get("paedagogik_grund") or "")
     words = data.get("gefundene_schimpfwoerter") or []
     if not isinstance(words, list):
