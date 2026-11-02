@@ -44,7 +44,7 @@ Each child is a profile and appears as its own device under ParentControl. A pro
 You add, rename, and remove children in the integration options, and assign them to the players there. Every player needs at least one child. The rules of a child are set in the card or with these entities:
 
 - **Age:** minimum age that applies to this child.
-- **Educational only:** also blocks age-appropriate videos without learning value. When off, the rating is only shown.
+- **Educational only:** also blocks age-appropriate videos without learning value. When off, the rating is only shown. The default prompt is strict: let's plays and gameplay count as entertainment unless they mainly explain something, like a tutorial.
 - **Block swear words:** also blocks age-appropriate videos, for example music videos. Detection uses a word list on the full transcript and the model. Without subtitles the model only sees title and description, so lyrics can go unnoticed.
 - **Strict rating:** blocks videos without subtitles and videos whose check failed, for example when Ollama is unreachable. It also pauses YouTube when the device reports no title for 150 seconds. This also hits many harmless videos, especially music.
 - **Block Shorts:** pauses every YouTube Short, also from allowed channels. On by default.

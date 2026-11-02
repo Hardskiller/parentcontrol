@@ -44,7 +44,7 @@ Jedes Kind ist ein Profil und erscheint als eigenes Gerät unter ParentControl. 
 Kinder legst du in den Optionen der Integration an, benennst sie um oder entfernst sie und ordnest sie dort den Geräten zu. Jedes Gerät braucht mindestens ein Kind. Die Regeln eines Kindes stellst du in der Karte oder über diese Entitäten ein:
 
 - **Alter:** Mindestalter, das für dieses Kind gilt.
-- **Nur pädagogisch wertvoll:** blockiert auch altersgerechte Videos ohne Lernwert. Ohne Schalter wird die Bewertung nur angezeigt.
+- **Nur pädagogisch wertvoll:** blockiert auch altersgerechte Videos ohne Lernwert. Ohne Schalter wird die Bewertung nur angezeigt. Der Standard-Prompt ist streng: Let's Plays und Gameplay gelten als Unterhaltung, außer sie erklären überwiegend etwas, etwa ein Tutorial.
 - **Schimpfwörter blockieren:** blockiert auch altersgerechte Videos, zum Beispiel Musikvideos. Erkannt wird das über eine Wortliste im gesamten Transkript und über das Modell. Ohne Untertitel beurteilt das Modell nur Titel und Beschreibung, und Liedtexte können dann unerkannt bleiben.
 - **Strenge Bewertung:** blockiert Videos ohne Untertitel und Videos, deren Prüfung fehlgeschlagen ist, etwa wenn Ollama nicht erreichbar ist. Außerdem pausiert sie YouTube, wenn das Gerät 150 Sekunden lang keinen Titel meldet. Das trifft auch viele harmlose Videos, vor allem Musik.
 - **Shorts sperren:** pausiert jeden YouTube-Short, auch von freigegebenen Kanälen. Standardmäßig an.

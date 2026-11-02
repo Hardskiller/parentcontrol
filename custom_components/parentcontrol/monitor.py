@@ -204,7 +204,7 @@ class Monitor:
         self._selection: dict[str, str] = {}
         self._system_prompt = engine.build_system_prompt(
             options.get(CONF_AGE_PROMPT, engine.DEFAULT_AGE_PROMPT),
-            options.get(CONF_PEDAGOGY_PROMPT, engine.DEFAULT_PEDAGOGY_PROMPT),
+            engine.pedagogy_prompt(options.get(CONF_PEDAGOGY_PROMPT)),
         )
         # Part of the cache key, so edited prompts lead to new ratings.
         self._prompt_id = hashlib.sha256(self._system_prompt.encode()).hexdigest()[:8]
@@ -284,6 +284,16 @@ class Monitor:
     @callback
     def async_start(self) -> None:
         """Start following the players."""
+        # Nothing is pending after a restart, so no entry may keep waiting.
+        for history in self._history.values():
+            for entry in history:
+                if entry["status"] != STATUS_CHECKING:
+                    continue
+                key = f"{entry.get('schluessel')}\n{self._prompt_id}"
+                if entry.get("schluessel") and key in self._ratings:
+                    self._complete_history(entry["schluessel"], self._ratings[key])
+                else:
+                    entry["status"] = STATUS_UNCHECKED
         self._unsubscribe = [
             async_track_state_change_event(self.hass, self.players, self._state_changed),
             # Cast reports play and pause within a second. Without its own timer
@@ -946,6 +956,43 @@ class Monitor:
             del history[self._history_size :]
         self._save()
 
+    @callback
+    def _complete_history(self, video_key: str, rating: dict | None) -> None:
+        """Fill in entries still waiting for this rating, for example after the child moved on."""
+        changed = False
+        for player, history in self._history.items():
+            rules = self.rules(player)
+            for entry in history:
+                waiting = entry["status"] == STATUS_CHECKING
+                if not waiting or rules is None or entry.get("schluessel") != video_key:
+                    continue
+                changed = True
+                if rating is None:
+                    entry["status"] = STATUS_UNCHECKED
+                    continue
+                filtered = filter_words(rating, rules)
+                listed = rules.is_allowed(engine.normalize(entry.get("kanal") or ""))
+                reason = self._block_reason(rules, filtered, listed)
+                result = engine.Rating(**filtered)
+                entry.update(
+                    status=STATUS_BLOCKED if reason else STATUS_FREE,
+                    sperrgrund=reason,
+                    sperrtext=block_text(reason, rules.age, result),
+                    mindestalter=result.min_age,
+                    grund=result.reason,
+                    paedagogisch_wertvoll=result.valuable,
+                    schimpfwoerter=result.profanity,
+                    schimpfwoerter_liste=result.profanity_words,
+                )
+                self._count_video(
+                    f"{video_key}\n{self._prompt_id}", reason is not None, result.valuable, player
+                )
+                if reason:
+                    self._keep_transcript(video_key)
+        if changed:
+            self._save()
+            async_dispatcher_send(self.hass, self.signal)
+
     def _may_start(self, key: str) -> bool:
         if key in self._pending:
             return False
@@ -1014,11 +1061,13 @@ class Monitor:
             self._failed[key] = time.monotonic()
             self._set_health(HEALTH_OLLAMA, False)
             self._log_event("nicht_geprueft", video, None)
+            self._complete_history(video_key, None)
         else:
             self._failed.pop(key, None)
             self._set_health(HEALTH_OLLAMA, True)
             self._ratings[key] = asdict(rating)
             self._log_event("eingestuft", video, self._ratings[key])
+            self._complete_history(video_key, self._ratings[key])
         finally:
             self._pending.discard(key)
         self.async_evaluate_all()

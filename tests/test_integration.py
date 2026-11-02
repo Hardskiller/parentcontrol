@@ -1,4 +1,5 @@
 """Tests against a real Home Assistant core."""
+from dataclasses import asdict
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -1651,4 +1652,40 @@ async def test_viewing_time_flag_follows_the_clock(hass, pauses, freezer):
     assert hass.states.get(PROFILE_WATCH).attributes["im_zeitfenster"] is True
     await tick(hass, freezer, 180, step=30)
     assert hass.states.get(PROFILE_WATCH).attributes["im_zeitfenster"] is False
+    patcher.stop()
+
+
+async def test_history_entry_gets_its_result_after_the_child_moved_on(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4, valuable=True)
+    monitor = entry.runtime_data
+    # The rating of the first video only finishes after the next one started.
+    monitor._pending.add(f"Titel\nKanal\n{monitor._prompt_id}")
+    await play(hass)
+    assert hass.states.get(HISTORY).attributes["videos"][0]["status"] == "wird_geprueft"
+    await play(hass, attributes={**VIDEO, "media_title": "Zweites"})
+    monitor._pending.clear()
+    monitor._ratings[f"Titel\nKanal\n{monitor._prompt_id}"] = asdict(
+        engine.Rating(4, "Grund", "untertitel", "id", True, "Lehrreich")
+    )
+    monitor._complete_history("Titel\nKanal", monitor._ratings[f"Titel\nKanal\n{monitor._prompt_id}"])
+    await hass.async_block_till_done()
+    first = hass.states.get(HISTORY).attributes["videos"][1]
+    assert first["titel"] == "Titel"
+    assert first["status"] == "frei"
+    assert first["paedagogisch_wertvoll"] is True
+    patcher.stop()
+
+
+async def test_waiting_entries_are_cleared_after_a_restart(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4)
+    monitor = entry.runtime_data
+    monitor._pending.add(f"Titel\nKanal\n{monitor._prompt_id}")
+    await play(hass)
+    monitor._pending.clear()
+    monitor._ratings.clear()
+    await monitor.async_save_now()
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data.history(TV)[0]["status"] in ("nicht_geprueft", "blockiert", "frei")
+    assert all(video["status"] != "wird_geprueft" for video in entry.runtime_data.history(TV)[1:])
     patcher.stop()

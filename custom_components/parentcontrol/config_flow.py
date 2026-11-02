@@ -449,9 +449,7 @@ class ParentControlOptionsFlow(OptionsFlow):
             vol.Optional(
                 CONF_PEDAGOGY_PROMPT,
                 description={
-                    "suggested_value": current.get(
-                        CONF_PEDAGOGY_PROMPT, engine.DEFAULT_PEDAGOGY_PROMPT
-                    )
+                    "suggested_value": engine.pedagogy_prompt(current.get(CONF_PEDAGOGY_PROMPT))
                 },
             ): TEXT_SELECTOR,
         }

@@ -223,3 +223,15 @@ def test_words_are_added_once_and_removed_ignoring_case():
     text = engine.add_word("Mist", "mist")
     assert text == "mist"
     assert engine.remove_word("Mist\nblöd", "MIST") == "blöd"
+
+
+def test_old_default_pedagogy_prompt_is_replaced():
+    assert engine.pedagogy_prompt(engine.OLD_PEDAGOGY_PROMPTS[0]) == engine.DEFAULT_PEDAGOGY_PROMPT
+    assert engine.pedagogy_prompt("") == engine.DEFAULT_PEDAGOGY_PROMPT
+    assert engine.pedagogy_prompt("Mein Prompt") == "Mein Prompt"
+
+
+def test_schema_asks_for_reasons_before_decisions():
+    keys = list(engine.RATING_SCHEMA["properties"])
+    assert keys.index("grund") < keys.index("mindestalter")
+    assert keys.index("paedagogik_grund") < keys.index("paedagogisch_wertvoll")
