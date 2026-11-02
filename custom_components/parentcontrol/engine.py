@@ -368,6 +368,22 @@ def list_entries(text: str, with_age: bool) -> list[dict]:
     return entries
 
 
+def parse_words(text: str) -> list[str]:
+    """Read one allowed word per line; "Mist*" allows every word starting with it."""
+    return [word for line in text.splitlines() if (word := line.strip().casefold())]
+
+
+def word_allowed(word: str, patterns: list[str]) -> bool:
+    """Match a whole word, ignoring case; YouTube's censor marks are never allowed."""
+    if word == CENSORED:
+        return False
+    word = word.casefold()
+    return any(
+        word.startswith(pattern[:-1]) if pattern.endswith("*") else word == pattern
+        for pattern in patterns
+    )
+
+
 def parse_blocked(text: str) -> set[str]:
     """Read one channel per line."""
     return {channel for line in text.splitlines() if (channel := normalize(line))}
@@ -389,3 +405,14 @@ def add_channel(text: str, channel: str, age: int | None = None) -> str:
 def is_allowed(min_age: int, age: int) -> bool:
     """Return whether a child of the given age may watch."""
     return min_age <= age
+
+
+def remove_word(text: str, word: str) -> str:
+    """Remove an allowed word from a list text."""
+    wanted = word.strip().casefold()
+    return "\n".join(line for line in text.splitlines() if line.strip().casefold() != wanted)
+
+
+def add_word(text: str, word: str) -> str:
+    """Add an allowed word to a list text, once."""
+    return "\n".join(filter(None, (remove_word(text, word), word.strip())))

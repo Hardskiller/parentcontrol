@@ -1,0 +1,43 @@
+blueprint:
+  name: ParentControl – wrong PIN
+  description: >-
+    Sends a push notification when someone enters a wrong PIN on the
+    ParentControl lock, optionally only from a certain attempt on.
+  domain: automation
+  source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/wrong_pin.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: Device of the Home Assistant app that receives the notification.
+      selector:
+        device:
+          integration: mobile_app
+    min_attempt:
+      name: From attempt
+      description: Notify from this wrong attempt on. After 5 wrong PINs entry is blocked.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 5
+          mode: box
+
+mode: queued
+
+trigger:
+  - trigger: event
+    event_type: parentcontrol_pin_failed
+
+variables:
+  min_attempt: !input min_attempt
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.event.data.attempt | int(0) >= min_attempt | int(1) }}"
+
+action:
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "ParentControl: falscher PIN"
+    message: "Versuch {{ trigger.event.data.attempt }}. Nach 5 falschen Versuchen ist die Eingabe gesperrt."

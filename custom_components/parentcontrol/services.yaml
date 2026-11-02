@@ -13,10 +13,9 @@ allow_channel:
           min: 0
           max: 18
           mode: box
-    only_this_device:
-      default: false
+    profile:
       selector:
-        boolean:
+        text:
 block_channel:
   fields:
     channel:
@@ -26,10 +25,9 @@ block_channel:
       selector:
         entity:
           domain: media_player
-    only_this_device:
-      default: false
+    profile:
       selector:
-        boolean:
+        text:
 remove_channel:
   fields:
     list:
@@ -46,7 +44,24 @@ remove_channel:
       selector:
         entity:
           domain: media_player
-    only_this_device:
-      default: false
+    profile:
       selector:
-        boolean:
+        text:
+allow_word:
+  fields:
+    word:
+      required: true
+      selector:
+        text:
+    profile:
+      selector:
+        text:
+remove_word:
+  fields:
+    word:
+      required: true
+      selector:
+        text:
+    profile:
+      selector:
+        text:

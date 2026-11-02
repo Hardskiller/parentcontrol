@@ -1,0 +1,55 @@
+blueprint:
+  name: ParentControl – service down
+  description: >-
+    Sends a push notification when Ollama or the YouTube lookup of
+    ParentControl has not worked for a while, and once it works again.
+  domain: automation
+  source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/service_down.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: Device of the Home Assistant app that receives the notification.
+      selector:
+        device:
+          integration: mobile_app
+    sensors:
+      name: Services
+      description: The Ollama and YouTube lookup sensors of ParentControl.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: parentcontrol
+              domain: binary_sensor
+    duration:
+      name: Down for
+      description: Notify only when the service has been down this long.
+      default:
+        minutes: 10
+      selector:
+        duration:
+
+mode: queued
+
+trigger:
+  - trigger: state
+    entity_id: !input sensors
+    to: "off"
+    for: !input duration
+    id: down
+  - trigger: state
+    entity_id: !input sensors
+    from: "off"
+    to: "on"
+    id: up
+
+action:
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: >-
+      ParentControl: {{ trigger.to_state.name }}
+      {{ 'ausgefallen' if trigger.id == 'down' else 'wieder da' }}
+    message: >-
+      {% if trigger.id == 'down' %}Videos werden nicht vollständig geprüft. Ohne strenge
+      Bewertung laufen sie weiter.{% else %}Die Prüfung funktioniert wieder.{% endif %}

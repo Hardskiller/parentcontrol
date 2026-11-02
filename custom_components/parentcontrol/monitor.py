@@ -33,6 +33,7 @@ from . import engine
 from .const import (
     BLOCK_AGE,
     BLOCK_CHANNEL,
+    BLOCK_NO_DATA,
     BLOCK_NO_SUBTITLES,
     BLOCK_PEDAGOGY,
     BLOCK_PROFANITY,
@@ -41,15 +42,19 @@ from .const import (
     CONF_AGE,
     CONF_AGE_PROMPT,
     CONF_ALLOWED,
+    CONF_ALLOWED_WORDS,
     CONF_BLOCKED,
-    CONF_DEVICE_AGES,
-    CONF_DEVICE_ALLOWED,
-    CONF_DEVICE_BLOCKED,
+    CONF_DEVICE_PROFILES,
     CONF_HISTORY_SIZE,
     CONF_MODEL,
+    CONF_NAME,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
     CONF_PLAYERS,
+    CONF_PROFILE_ALLOWED,
+    CONF_PROFILE_BLOCKED,
+    CONF_PROFILE_WORDS,
+    CONF_PROFILES,
     DOMAIN,
     EVENT_PAUSED,
     HEALTH,
@@ -61,16 +66,17 @@ from .const import (
     LIST_BLOCKED,
     LOOSENING_VALUES,
     MAX_EVENTS,
+    NO_DATA_GRACE_SECONDS,
     PAUSE_DEBOUNCE_SECONDS,
+    PROFILE_SETTINGS,
     REPAIR_AFTER_SECONDS,
     RETRY_SECONDS,
-    SETTING_BLOCK_PROFANITY,
-    SETTING_BLOCK_SHORTS,
-    SETTING_REQUIRE_PEDAGOGY,
-    SETTING_SEEK_TO_START,
-    SETTING_SKIP_CHECKS,
-    SETTING_STRICT,
+    SELECT_AUTO,
+    SELECT_UNRESTRICTED,
     SETTING_DEFAULTS,
+    SETTING_INHERIT_CHANNELS,
+    SETTING_INHERIT_WORDS,
+    SETTING_SEEK_TO_START,
     SHORT_MAX_SECONDS,
     STAT_APPROVED,
     STAT_SKIPPED,
@@ -84,17 +90,22 @@ from .const import (
     STATUS_IDLE,
     STATUS_NO_DATA,
     STATUS_UNCHECKED,
+    STATUS_UNRESTRICTED,
     STORAGE_VERSION,
 )
 from .pinlock import PinLock
+from .profiles import Rules, profile_rules
 
 _LOGGER = logging.getLogger(__name__)
 
 INACTIVE_STATES = {STATE_OFF, STATE_STANDBY, STATE_UNAVAILABLE, STATE_UNKNOWN}
+# Fire TV and Android TV over ADB only report the app id or the source.
+APP_ATTRIBUTES = ("app_name", "app_id", "source")
 SAVE_DELAY_SECONDS = 5
 ENFORCE_INTERVAL = timedelta(seconds=3)
 MAX_TICK_SECONDS = 30
 HEALTH_TIMEOUT = 10
+LIST_WORDS = "words"
 
 
 @dataclass(frozen=True)
@@ -110,6 +121,7 @@ class PlayerStatus:
     list_state: str | None = None
     short: bool = False
     block_text: str | None = None
+    profiles: tuple[str, ...] = ()
 
 
 def block_text(reason: str | None, age: int | None, rating: engine.Rating | None) -> str | None:
@@ -131,10 +143,20 @@ def block_text(reason: str | None, age: int | None, rating: engine.Rating | None
 
 BLOCK_TEXTS = {
     BLOCK_CHANNEL: "Der Kanal steht auf der Sperrliste.",
-    BLOCK_SHORT: "Shorts sind auf diesem Gerät gesperrt.",
+    BLOCK_SHORT: "Shorts sind für dieses Profil gesperrt.",
     BLOCK_NO_SUBTITLES: "Strenge Bewertung: Ohne Untertitel ist keine sichere Einstufung möglich.",
     BLOCK_UNCHECKED: "Strenge Bewertung: Die Prüfung ist fehlgeschlagen.",
+    BLOCK_NO_DATA: "Strenge Bewertung: Das Gerät meldet keinen Videotitel.",
 }
+
+
+def filter_words(rating: dict, rules: Rules) -> dict:
+    """Drop allowed swear words; a report without words stays a report."""
+    words = rating.get("profanity_words") or []
+    if not words:
+        return rating
+    remaining = rules.offending_words(words)
+    return {**rating, "profanity_words": remaining, "profanity": bool(remaining)}
 
 
 class Monitor:
@@ -144,27 +166,18 @@ class Monitor:
         self.hass = hass
         self.entry = entry
         self.lock = lock
-        self.players: list[str] = entry.options[CONF_PLAYERS]
+        options = entry.options
+        self.players: list[str] = options[CONF_PLAYERS]
+        self.profiles: dict[str, dict] = options[CONF_PROFILES]
+        self.device_profiles: dict[str, list[str]] = options[CONF_DEVICE_PROFILES]
         self.signal = f"{DOMAIN}_{entry.entry_id}"
-        self.age: int = entry.data[CONF_AGE]
         self.enabled = True
-        self._device_ages: dict[str, int] = entry.options.get(CONF_DEVICE_AGES, {})
-        self._settings: dict[str, dict[str, bool]] = {}
-        self._allowed = engine.parse_allowed(
-            entry.options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
-        )
-        self._blocked = engine.parse_blocked(entry.options.get(CONF_BLOCKED, ""))
-        self._device_allowed = {
-            player: engine.parse_allowed(text)
-            for player, text in entry.options.get(CONF_DEVICE_ALLOWED, {}).items()
-        }
-        self._device_blocked = {
-            player: engine.parse_blocked(text)
-            for player, text in entry.options.get(CONF_DEVICE_BLOCKED, {}).items()
-        }
+        self._device_settings: dict[str, dict[str, bool]] = {}
+        self._profile_settings: dict[str, dict] = {}
+        self._selection: dict[str, str] = {}
         self._system_prompt = engine.build_system_prompt(
-            entry.options.get(CONF_AGE_PROMPT, engine.DEFAULT_AGE_PROMPT),
-            entry.options.get(CONF_PEDAGOGY_PROMPT, engine.DEFAULT_PEDAGOGY_PROMPT),
+            options.get(CONF_AGE_PROMPT, engine.DEFAULT_AGE_PROMPT),
+            options.get(CONF_PEDAGOGY_PROMPT, engine.DEFAULT_PEDAGOGY_PROMPT),
         )
         # Part of the cache key, so edited prompts lead to new ratings.
         self._prompt_id = hashlib.sha256(self._system_prompt.encode()).hexdigest()[:8]
@@ -175,6 +188,7 @@ class Monitor:
         self._pending: set[str] = set()
         self._failed: dict[str, float] = {}
         self._last_pause: dict[str, float] = {}
+        self._no_data_since: dict[str, float] = {}
         self._semaphore = asyncio.Semaphore(1)
         self._unsubscribe: list[Callable[[], None]] = []
         self._day = dt_util.now().date().isoformat()
@@ -182,20 +196,26 @@ class Monitor:
         self._today = dict.fromkeys(STATS, 0)
         self._totals = dict.fromkeys(STATS, 0)
         self._watch_seconds: dict[str, float] = {}
+        self._profile_seconds: dict[str, float] = {}
         self._last_tick = time.monotonic()
         self._shorts: dict[str, bool] = {}
         self._history: dict[str, list[dict]] = {}
-        self._history_size = int(entry.options.get(CONF_HISTORY_SIZE, HISTORY_SIZE))
+        self._history_size = int(options.get(CONF_HISTORY_SIZE, HISTORY_SIZE))
         self.health: dict[str, bool | None] = dict.fromkeys(HEALTH)
         self._down_since: dict[str, float] = {}
         self._last_health_check = -HEALTH_INTERVAL_SECONDS
 
     async def async_load(self) -> None:
-        """Restore age, switch, ratings, statistics and the protocol."""
+        """Restore switches, profiles, ratings, statistics and the protocol."""
         data = await self._store.async_load() or {}
-        self.age = data.get("age", self.age)
         self.enabled = data.get("enabled", True)
-        self._settings = data.get("settings", {})
+        self._device_settings = data.get("device_settings", {})
+        self._profile_settings = data.get("profile_settings", {})
+        self._selection = {
+            player: value
+            for player, value in data.get("selection", {}).items()
+            if value in (SELECT_AUTO, SELECT_UNRESTRICTED) or value in self.profiles
+        }
         self._ratings = data.get("ratings", {})
         self._events = data.get("events", [])
         self._totals |= data.get("totals", {})
@@ -209,6 +229,7 @@ class Monitor:
             self._seen = data.get("seen", [])
             self._today |= data.get("today", {})
             self._watch_seconds = data.get("watch_seconds", {})
+            self._profile_seconds = data.get("profile_seconds", {})
 
     @callback
     def async_start(self) -> None:
@@ -228,98 +249,194 @@ class Monitor:
             unsubscribe()
         self._unsubscribe = []
 
-    def setting(self, player: str, setting: str) -> bool:
-        """Return a checkbox of a player; most start switched off."""
-        return self._settings.get(player, {}).get(setting, SETTING_DEFAULTS.get(setting, False))
+    # Settings of devices and profiles
+
+    def device_setting(self, player: str, setting: str) -> bool:
+        """Return a checkbox of a player."""
+        return self._device_settings.get(player, {}).get(setting, False)
+
+    @callback
+    def async_set_device_setting(self, player: str, setting: str, value: bool) -> None:
+        """Change a checkbox of a player."""
+        self._device_settings.setdefault(player, {})[setting] = value
+        self._save()
+
+    def profile_age(self, profile: str) -> int:
+        """Return the age of a child; the options hold only the start value."""
+        stored = self._profile_settings.get(profile, {}).get(CONF_AGE)
+        return stored if stored is not None else self.profiles[profile][CONF_AGE]
+
+    def profile_setting(self, profile: str, setting: str) -> bool:
+        """Return a rule switch of a child."""
+        return self._profile_settings.get(profile, {}).get(
+            setting, SETTING_DEFAULTS.get(setting, False)
+        )
 
     @staticmethod
     def loosens_setting(setting: str, value: bool) -> bool:
         """Return whether a checkbox change weakens the protection."""
         return value == LOOSENING_VALUES.get(setting, False)
 
-    def device_age(self, player: str) -> int:
-        """Return the age that applies to a player."""
-        return self._device_ages.get(player, self.age)
+    @callback
+    def async_set_profile_age(self, profile: str, age: int) -> None:
+        """Change the age of a child."""
+        self._profile_settings.setdefault(profile, {})[CONF_AGE] = age
+        self._save()
+        self.async_evaluate_all()
 
-    def channel_lists(self, player: str | None = None) -> dict[str, list[dict]]:
-        """Return the allowed and blocked list of a player or of all devices."""
+    @callback
+    def async_set_profile_setting(self, profile: str, setting: str, value: bool) -> None:
+        """Change a rule switch of a child."""
+        self._profile_settings.setdefault(profile, {})[setting] = value
+        self._save()
+        self.async_evaluate_all()
+
+    def profile_name(self, profile: str) -> str:
+        """Return the name of a profile."""
+        return self.profiles[profile][CONF_NAME]
+
+    def find_profile(self, value: str) -> str | None:
+        """Return a profile by its id or its name, ignoring case."""
+        if value in self.profiles:
+            return value
+        wanted = value.casefold()
+        return next(
+            (pid for pid, profile in self.profiles.items() if profile[CONF_NAME].casefold() == wanted),
+            None,
+        )
+
+    # Who is watching
+
+    def selection(self, player: str) -> str:
+        """Return the selection of a player: auto, a profile id or unrestricted."""
+        return self._selection.get(player, SELECT_AUTO)
+
+    @callback
+    def async_select(self, player: str, value: str) -> None:
+        """Choose who is watching; it falls back to auto when the device turns off."""
+        if value == SELECT_AUTO:
+            self._selection.pop(player, None)
+        else:
+            self._selection[player] = value
+        self._save()
+        self._evaluate(player)
+        async_dispatcher_send(self.hass, self.signal)
+
+    def active_profiles(self, player: str) -> list[str]:
+        """Return the profiles whose rules apply; none while unrestricted."""
+        selection = self.selection(player)
+        if selection == SELECT_UNRESTRICTED:
+            return []
+        if selection != SELECT_AUTO:
+            return [selection]
+        return [pid for pid in self.device_profiles.get(player, []) if pid in self.profiles]
+
+    def rules(self, player: str) -> Rules | None:
+        """Return the combined rules of a player, or None while unrestricted."""
+        active = self.active_profiles(player)
+        if not active:
+            return None
         options = self.entry.options
-        if player:
-            allowed = options.get(CONF_DEVICE_ALLOWED, {}).get(player, "")
-            blocked = options.get(CONF_DEVICE_BLOCKED, {}).get(player, "")
+        global_allowed = options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
+        global_blocked = options.get(CONF_BLOCKED, "")
+        global_words = options.get(CONF_ALLOWED_WORDS, "")
+        members = tuple(
+            profile_rules(
+                self.profile_age(pid),
+                {setting: self.profile_setting(pid, setting) for setting in PROFILE_SETTINGS},
+                options.get(CONF_PROFILE_ALLOWED, {}).get(pid, ""),
+                options.get(CONF_PROFILE_BLOCKED, {}).get(pid, ""),
+                options.get(CONF_PROFILE_WORDS, {}).get(pid, ""),
+                global_allowed,
+                global_blocked,
+                global_words,
+                self.profile_setting(pid, SETTING_INHERIT_CHANNELS),
+                self.profile_setting(pid, SETTING_INHERIT_WORDS),
+            )
+            for pid in active
+        )
+        return Rules(tuple(active), members)
+
+    # Lists
+
+    def lists(self, profile: str | None = None) -> dict[str, list]:
+        """Return the allowed and blocked channels and the allowed words."""
+        options = self.entry.options
+        if profile:
+            allowed = options.get(CONF_PROFILE_ALLOWED, {}).get(profile, "")
+            blocked = options.get(CONF_PROFILE_BLOCKED, {}).get(profile, "")
+            words = options.get(CONF_PROFILE_WORDS, {}).get(profile, "")
         else:
             allowed = options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
             blocked = options.get(CONF_BLOCKED, "")
+            words = options.get(CONF_ALLOWED_WORDS, "")
         return {
             "freigegeben": engine.list_entries(allowed, with_age=True),
             "gesperrt": engine.list_entries(blocked, with_age=False),
+            "erlaubte_woerter": [line.strip() for line in words.splitlines() if line.strip()],
         }
 
-    def history(self, player: str) -> list[dict]:
-        """Return the latest videos of a player, newest first."""
-        return self._history.get(player, [])
-
-    @callback
-    def async_set_setting(self, player: str, setting: str, value: bool) -> None:
-        """Change a checkbox of a player."""
-        self._settings.setdefault(player, {})[setting] = value
-        self._save()
-        self._evaluate(player)
-
-    @callback
-    def async_set_device_age(self, player: str, age: int) -> None:
-        """Give a player its own age; reloads the entry."""
-        ages = {**self._device_ages, player: age}
-        self.hass.config_entries.async_update_entry(
-            self.entry, options={**self.entry.options, CONF_DEVICE_AGES: ages}
-        )
-
-    @callback
-    def async_remove_channel(self, allow: bool, channel: str, player: str | None) -> None:
-        """Remove a channel from the allowed or the blocked list."""
+    def _list_texts(self, profile: str | None) -> tuple[dict, dict[str, str]]:
+        """Return the options and the editable texts of one scope."""
         options = {**self.entry.options}
-        if player:
-            key = CONF_DEVICE_ALLOWED if allow else CONF_DEVICE_BLOCKED
-            lists = dict(options.get(key, {}))
-            lists[player] = engine.remove_channel(lists.get(player, ""), channel)
-            options[key] = lists
-        elif allow:
-            options[CONF_ALLOWED] = engine.remove_channel(
-                options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS), channel
-            )
+        if profile:
+            texts = {
+                LIST_ALLOWED: options.get(CONF_PROFILE_ALLOWED, {}).get(profile, ""),
+                LIST_BLOCKED: options.get(CONF_PROFILE_BLOCKED, {}).get(profile, ""),
+                LIST_WORDS: options.get(CONF_PROFILE_WORDS, {}).get(profile, ""),
+            }
         else:
-            options[CONF_BLOCKED] = engine.remove_channel(options.get(CONF_BLOCKED, ""), channel)
+            texts = {
+                LIST_ALLOWED: options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS),
+                LIST_BLOCKED: options.get(CONF_BLOCKED, ""),
+                LIST_WORDS: options.get(CONF_ALLOWED_WORDS, ""),
+            }
+        return options, texts
+
+    @callback
+    def _store_list_texts(self, options: dict, texts: dict[str, str], profile: str | None) -> None:
+        """Write the texts back; this reloads the entry."""
+        if profile:
+            for key, name in (
+                (CONF_PROFILE_ALLOWED, LIST_ALLOWED),
+                (CONF_PROFILE_BLOCKED, LIST_BLOCKED),
+                (CONF_PROFILE_WORDS, LIST_WORDS),
+            ):
+                options[key] = {**options.get(key, {}), profile: texts[name]}
+        else:
+            options[CONF_ALLOWED] = texts[LIST_ALLOWED]
+            options[CONF_BLOCKED] = texts[LIST_BLOCKED]
+            options[CONF_ALLOWED_WORDS] = texts[LIST_WORDS]
         self.hass.config_entries.async_update_entry(self.entry, options=options)
 
     @callback
     def async_list_channel(
-        self, allow: bool, channel: str, age: int | None, player: str | None
+        self, allow: bool, channel: str, age: int | None, profile: str | None
     ) -> None:
         """Add a channel to one list and remove it from the opposite one."""
-        options = {**self.entry.options}
-        if player:
-            allowed = dict(options.get(CONF_DEVICE_ALLOWED, {}))
-            blocked = dict(options.get(CONF_DEVICE_BLOCKED, {}))
-            target, opposite = (allowed, blocked) if allow else (blocked, allowed)
-            target[player] = engine.add_channel(
-                target.get(player, ""), channel, age if allow else None
-            )
-            opposite[player] = engine.remove_channel(opposite.get(player, ""), channel)
-            options[CONF_DEVICE_ALLOWED] = allowed
-            options[CONF_DEVICE_BLOCKED] = blocked
-        else:
-            target_key, opposite_key = (
-                (CONF_ALLOWED, CONF_BLOCKED) if allow else (CONF_BLOCKED, CONF_ALLOWED)
-            )
-            lists = {
-                CONF_ALLOWED: options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS),
-                CONF_BLOCKED: options.get(CONF_BLOCKED, ""),
-            }
-            options[target_key] = engine.add_channel(
-                lists[target_key], channel, age if allow else None
-            )
-            options[opposite_key] = engine.remove_channel(lists[opposite_key], channel)
-        self.hass.config_entries.async_update_entry(self.entry, options=options)
+        options, texts = self._list_texts(profile)
+        target, opposite = (LIST_ALLOWED, LIST_BLOCKED) if allow else (LIST_BLOCKED, LIST_ALLOWED)
+        texts[target] = engine.add_channel(texts[target], channel, age if allow else None)
+        texts[opposite] = engine.remove_channel(texts[opposite], channel)
+        self._store_list_texts(options, texts, profile)
+
+    @callback
+    def async_remove_channel(self, allow: bool, channel: str, profile: str | None) -> None:
+        """Remove a channel from the allowed or the blocked list."""
+        options, texts = self._list_texts(profile)
+        name = LIST_ALLOWED if allow else LIST_BLOCKED
+        texts[name] = engine.remove_channel(texts[name], channel)
+        self._store_list_texts(options, texts, profile)
+
+    @callback
+    def async_set_word(self, allow: bool, word: str, profile: str | None) -> None:
+        """Add or remove an allowed swear word."""
+        options, texts = self._list_texts(profile)
+        change = engine.add_word if allow else engine.remove_word
+        texts[LIST_WORDS] = change(texts[LIST_WORDS], word)
+        self._store_list_texts(options, texts, profile)
+
+    # Results
 
     def status(self, player: str) -> PlayerStatus:
         """Return the current result for a player."""
@@ -337,12 +454,13 @@ class Monitor:
         """Return today's watch time of a player."""
         return int(self._watch_seconds.get(player, 0) // 60)
 
-    @callback
-    def async_set_age(self, age: int) -> None:
-        """Change the default age."""
-        self.age = age
-        self._save()
-        self.async_evaluate_all()
+    def profile_watch_minutes(self, profile: str) -> int:
+        """Return today's watch time of a child."""
+        return int(self._profile_seconds.get(profile, 0) // 60)
+
+    def history(self, player: str) -> list[dict]:
+        """Return the latest videos of a player, newest first."""
+        return self._history.get(player, [])
 
     @callback
     def async_set_enabled(self, enabled: bool) -> None:
@@ -359,7 +477,18 @@ class Monitor:
 
     @callback
     def _state_changed(self, event: Event[EventStateChangedData]) -> None:
-        self._evaluate(event.data["entity_id"])
+        player = event.data["entity_id"]
+        old, new = event.data["old_state"], event.data["new_state"]
+        turned_off = (
+            old is not None
+            and old.state not in INACTIVE_STATES
+            and (new is None or new.state in INACTIVE_STATES)
+        )
+        if turned_off and self._selection.pop(player, None):
+            # The choice of who is watching ends when the device turns off.
+            self._save()
+            async_dispatcher_send(self.hass, self.signal)
+        self._evaluate(player)
 
     @callback
     def _interval(self, _now: datetime) -> None:
@@ -420,6 +549,9 @@ class Monitor:
         self._seen = []
         self._today = dict.fromkeys(STATS, 0)
         self._watch_seconds = {}
+        self._profile_seconds = {}
+        # A choice of who is watching lasts one day at most.
+        self._selection = {}
         self._save()
         async_dispatcher_send(self.hass, self.signal)
 
@@ -436,6 +568,11 @@ class Monitor:
             before = self.watch_minutes(player)
             self._watch_seconds[player] = self._watch_seconds.get(player, 0) + elapsed
             changed |= self.watch_minutes(player) != before
+            # On a shared device the time counts for every child that may watch.
+            for profile in self.active_profiles(player):
+                before = self.profile_watch_minutes(profile)
+                self._profile_seconds[profile] = self._profile_seconds.get(profile, 0) + elapsed
+                changed |= self.profile_watch_minutes(profile) != before
         if changed:
             self._save()
             async_dispatcher_send(self.hass, self.signal)
@@ -466,9 +603,10 @@ class Monitor:
     @callback
     def _data(self) -> dict:
         return {
-            "age": self.age,
             "enabled": self.enabled,
-            "settings": self._settings,
+            "device_settings": self._device_settings,
+            "profile_settings": self._profile_settings,
+            "selection": self._selection,
             "ratings": self._ratings,
             "events": self._events,
             "day": self._day,
@@ -476,6 +614,7 @@ class Monitor:
             "today": self._today,
             "totals": self._totals,
             "watch_seconds": self._watch_seconds,
+            "profile_seconds": self._profile_seconds,
             "shorts": self._shorts,
             "history": self._history,
         }
@@ -502,7 +641,9 @@ class Monitor:
     @callback
     def _publish(self, player: str, status: PlayerStatus) -> None:
         status = replace(
-            status, block_text=block_text(status.block_reason, status.age, status.rating)
+            status,
+            block_text=block_text(status.block_reason, status.age, status.rating),
+            profiles=tuple(self.active_profiles(player)),
         )
         if self._statuses.get(player) != status:
             self._statuses[player] = status
@@ -529,6 +670,8 @@ class Monitor:
             "schimpfwoerter": rating.profanity if rating else None,
             "schimpfwoerter_liste": rating.profanity_words if rating else [],
             "short": status.short,
+            "profile": list(status.profiles),
+            "profil_namen": [self.profile_name(pid) for pid in status.profiles],
         }
         if history and (history[0]["titel"], history[0]["kanal"]) == (status.title, status.channel):
             history[0] = {**entry, "zeit": history[0]["zeit"]}
@@ -612,7 +755,7 @@ class Monitor:
     async def _async_stop_video(self, player: str) -> None:
         """Pause and optionally go back to the start; not every player can seek."""
         calls = [("media_pause", {})]
-        if self.setting(player, SETTING_SEEK_TO_START):
+        if self.device_setting(player, SETTING_SEEK_TO_START):
             calls.append(("media_seek", {"seek_position": 0}))
         for service, data in calls:
             try:
@@ -639,6 +782,7 @@ class Monitor:
         self.hass.async_create_task(self._async_stop_video(player))
         text = block_text(reason, age, engine.Rating(**rating) if rating else None)
         self._log_event("pausiert", video, rating, text)
+        profiles = self.active_profiles(player)
         self.hass.bus.async_fire(
             EVENT_PAUSED,
             {
@@ -649,33 +793,41 @@ class Monitor:
                 "block_reason": reason,
                 "block_text": text,
                 "swear_words": rating.get("profanity_words", []) if rating else [],
+                "profiles": [self.profile_name(pid) for pid in profiles],
             },
         )
         _LOGGER.info("Pausiert auf %s: %r (%s)", player, video.title, text)
 
-    def _is_blocked_channel(self, player: str, channel: str) -> bool:
-        return channel in self._blocked or channel in self._device_blocked.get(player, set())
+    @callback
+    def _handle_no_data(self, player: str, playing: bool, rules: Rules) -> None:
+        """Strict rating pauses YouTube that never reports a title."""
+        age = rules.age
+        if not playing:
+            self._no_data_since.pop(player, None)
+        elif self.enabled and rules.strict:
+            since = self._no_data_since.setdefault(player, time.monotonic())
+            if time.monotonic() - since >= NO_DATA_GRACE_SECONDS:
+                self._pause(player, engine.Video("YouTube ohne Titel"), None, BLOCK_NO_DATA, age)
+                self._publish(
+                    player, PlayerStatus(STATUS_NO_DATA, age=age, block_reason=BLOCK_NO_DATA)
+                )
+                return
+        self._publish(player, PlayerStatus(STATUS_NO_DATA, age=age))
 
-    def _is_allowed_channel(self, player: str, channel: str, age: int) -> bool:
-        device = self._device_allowed.get(player, {})
-        min_age = device[channel] if channel in device else self._allowed.get(channel)
-        return min_age is not None and age >= min_age
-
-    def _block_reason(
-        self, player: str, rating: dict, age: int, listed: bool
-    ) -> str | None:
+    @staticmethod
+    def _block_reason(rules: Rules, rating: dict, listed: bool) -> str | None:
         """Listed channels only fail on age and swear words."""
-        if not engine.is_allowed(rating["min_age"], age):
+        if not engine.is_allowed(rating["min_age"], rules.age):
             return BLOCK_AGE
-        if listed and not self.setting(player, SETTING_BLOCK_PROFANITY):
+        if listed and not rules.block_profanity:
             return None
         if listed:
             return BLOCK_PROFANITY if rating.get("profanity") else None
-        if self.setting(player, SETTING_STRICT) and rating.get("source") != engine.SOURCE_SUBTITLES:
+        if rules.strict and rating.get("source") != engine.SOURCE_SUBTITLES:
             return BLOCK_NO_SUBTITLES
-        if self.setting(player, SETTING_BLOCK_PROFANITY) and rating.get("profanity"):
+        if rules.block_profanity and rating.get("profanity"):
             return BLOCK_PROFANITY
-        if self.setting(player, SETTING_REQUIRE_PEDAGOGY) and not rating.get("valuable"):
+        if rules.require_pedagogy and not rating.get("valuable"):
             return BLOCK_PEDAGOGY
         return None
 
@@ -686,15 +838,24 @@ class Monitor:
             self._publish(player, PlayerStatus())
             return
         attributes = state.attributes
-        if "youtube" not in str(attributes.get("app_name") or "").lower():
+        app = " ".join(str(attributes.get(name) or "") for name in APP_ATTRIBUTES)
+        if "youtube" not in app.lower():
+            self._no_data_since.pop(player, None)
             self._publish(player, PlayerStatus())
             return
+        rules = self.rules(player)
         title = attributes.get("media_title")
-        if not title:
-            self._publish(player, PlayerStatus(STATUS_NO_DATA))
-            return
         channel = attributes.get("media_artist") or ""
-        age = self.device_age(player)
+        if rules is None:
+            # Unrestricted: no check and no statistics for the children.
+            self._no_data_since.pop(player, None)
+            self._publish(player, PlayerStatus(STATUS_UNRESTRICTED, title, channel or None))
+            return
+        if not title:
+            self._handle_no_data(player, state.state == STATE_PLAYING, rules)
+            return
+        self._no_data_since.pop(player, None)
+        age = rules.age
         if not self.enabled:
             self._publish(player, PlayerStatus(STATUS_DISABLED, title, channel, age))
             return
@@ -703,7 +864,7 @@ class Monitor:
         video_key = f"{title}\n{channel}"
         key = f"{video_key}\n{self._prompt_id}"
         normalized_channel = engine.normalize(channel)
-        if self._is_blocked_channel(player, normalized_channel):
+        if rules.is_blocked(normalized_channel):
             self._count_video(key, True, False)
             if state.state == STATE_PLAYING:
                 self._pause(player, video, None, BLOCK_CHANNEL, age)
@@ -719,12 +880,10 @@ class Monitor:
                 ),
             )
             return
-        listed = self._is_allowed_channel(player, normalized_channel, age)
+        listed = rules.is_allowed(normalized_channel)
         list_state = LIST_ALLOWED if listed else None
         # Shorts last three minutes at most and are blocked on every channel.
-        maybe_short = self.setting(player, SETTING_BLOCK_SHORTS) and not (
-            duration and duration > SHORT_MAX_SECONDS
-        )
+        maybe_short = rules.block_shorts and not (duration and duration > SHORT_MAX_SECONDS)
         if maybe_short and self._shorts.get(video_key):
             self._count_video(key, True, False)
             if state.state == STATE_PLAYING:
@@ -742,7 +901,7 @@ class Monitor:
                 ),
             )
             return
-        skip = listed and self.setting(player, SETTING_SKIP_CHECKS)
+        skip = listed and rules.skip_checks
         if maybe_short:
             if skip or key in self._ratings:
                 # Rated before Shorts were recognized, or no rating needed.
@@ -773,7 +932,7 @@ class Monitor:
         if rating is None and key in self._pending:
             self._publish(player, PlayerStatus(STATUS_CHECKING, title, channel, age))
             return
-        if rating is None and (listed or not self.setting(player, SETTING_STRICT)):
+        if rating is None and (listed or not rules.strict):
             self._publish(
                 player,
                 PlayerStatus(STATUS_UNCHECKED, title, channel, age, list_state=list_state),
@@ -788,7 +947,8 @@ class Monitor:
                 PlayerStatus(STATUS_BLOCKED, title, channel, age, block_reason=BLOCK_UNCHECKED),
             )
             return
-        block_reason = self._block_reason(player, rating, age, listed)
+        rating = filter_words(rating, rules)
+        block_reason = self._block_reason(rules, rating, listed)
         self._count_video(key, block_reason is not None, rating.get("valuable", False))
         if block_reason and state.state == STATE_PLAYING:
             self._pause(player, video, rating, block_reason, age)

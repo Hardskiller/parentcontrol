@@ -1,4 +1,4 @@
-"""Status, watch time, latest videos and video statistics."""
+"""Status, watch time, latest videos, child profiles and video statistics."""
 from __future__ import annotations
 
 from typing import Any
@@ -9,8 +9,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import ParentControlConfigEntry, device_info, entity_ids, player_device_info, player_name
-from .const import STATS, STATUSES
+from . import (
+    ParentControlConfigEntry,
+    device_info,
+    entity_ids,
+    player_device_info,
+    player_name,
+    profile_device_info,
+)
+from .const import CONF_PERSON, STATS, STATUSES
 
 
 async def async_setup_entry(
@@ -22,6 +29,7 @@ async def async_setup_entry(
     players = entry.runtime_data.players
     async_add_entities(
         [
+            *(ProfileSensor(entry, profile) for profile in entry.runtime_data.profiles),
             *(StatusSensor(hass, entry, player) for player in players),
             *(WatchTimeSensor(hass, entry, player) for player in players),
             *(HistorySensor(hass, entry, player) for player in players),
@@ -55,7 +63,7 @@ class StatusSensor(ParentControlSensor):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = STATUSES
     _attr_translation_key = "status"
-    _unrecorded_attributes = frozenset({"entitaeten", "freigegeben", "gesperrt"})
+    _unrecorded_attributes = frozenset({"entitaeten", "profile", "profil_namen"})
 
     def __init__(
         self, hass: HomeAssistant, entry: ParentControlConfigEntry, player: str
@@ -86,7 +94,10 @@ class StatusSensor(ParentControlSensor):
             "short": status.short,
             "name": player_name(self.hass, self._player),
             "entitaeten": entity_ids(self.hass, self._entry, self._player),
-            **self._monitor.channel_lists(self._player),
+            "auswahl": self._monitor.selection(self._player),
+            "profile": list(status.profiles),
+            "profil_namen": [self._monitor.profile_name(pid) for pid in status.profiles],
+            "zugeordnet": self._monitor.device_profiles.get(self._player, []),
         }
         if status.rating:
             attributes |= {
@@ -149,6 +160,44 @@ class HistorySensor(ParentControlSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the videos, newest first."""
         return {"videos": self._monitor.history(self._player)}
+
+
+class ProfileSensor(ParentControlSensor):
+    """One child: today's watch time as state, the profile for the card as attributes."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_translation_key = "profile_watch_time"
+    _unrecorded_attributes = frozenset(
+        {"entitaeten", "freigegeben", "gesperrt", "erlaubte_woerter", "bild"}
+    )
+
+    def __init__(self, entry: ParentControlConfigEntry, profile: str) -> None:
+        super().__init__(entry)
+        self._entry = entry
+        self._profile = profile
+        self._attr_unique_id = f"{entry.entry_id}_profile_{profile}"
+        self._attr_device_info = profile_device_info(entry, profile)
+
+    @property
+    def native_value(self) -> int:
+        """Return today's minutes of this child."""
+        return self._monitor.profile_watch_minutes(self._profile)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return name, picture, entities and lists of the child."""
+        person = self._monitor.profiles[self._profile].get(CONF_PERSON)
+        person_state = self.hass.states.get(person) if person else None
+        return {
+            "profil": self._profile,
+            "name": self._monitor.profile_name(self._profile),
+            "person": person,
+            "bild": person_state.attributes.get("entity_picture") if person_state else None,
+            "entitaeten": entity_ids(self.hass, self._entry, profile=self._profile),
+            **self._monitor.lists(self._profile),
+        }
 
 
 class StatSensor(ParentControlSensor):

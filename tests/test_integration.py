@@ -21,10 +21,9 @@ from custom_components.parentcontrol.const import (
     CONF_AGE,
     CONF_AGE_PROMPT,
     CONF_ALLOWED,
+    CONF_ALLOWED_WORDS,
     CONF_BLOCKED,
-    CONF_DEVICE_AGES,
-    CONF_DEVICE_ALLOWED,
-    CONF_DEVICE_BLOCKED,
+    CONF_DEVICE_PROFILES,
     CONF_HISTORY_SIZE,
     CONF_MODEL,
     CONF_OLLAMA_URL,
@@ -32,6 +31,10 @@ from custom_components.parentcontrol.const import (
     CONF_PIN,
     CONF_PIN_HASH,
     CONF_PLAYERS,
+    CONF_PROFILE_ALLOWED,
+    CONF_PROFILE_BLOCKED,
+    CONF_PROFILE_WORDS,
+    CONF_PROFILES,
     DOMAIN,
     SETTING_BLOCK_PROFANITY,
     SETTING_BLOCK_SHORTS,
@@ -45,13 +48,16 @@ WATCH = "sensor.parentcontrol_tv_watch_time_today"
 TV = "media_player.tv"
 KIDS = "media_player.kids"
 SENSOR = "sensor.parentcontrol_tv_youtube_check"
-STRICT_SWITCH = "switch.parentcontrol_tv_strict_rating_block_without_subtitles_or_result"
+STRICT_SWITCH = "switch.parentcontrol_kind_strict_rating_block_without_subtitles_or_result"
 SWITCH = "switch.parentcontrol_check"
-NUMBER = "number.parentcontrol_default_age"
-TV_AGE = "number.parentcontrol_tv_age"
+NUMBER = "number.parentcontrol_kind_age"
 LOCK = "lock.parentcontrol_settings"
 HISTORY = "sensor.parentcontrol_tv_latest_videos"
-SHORTS_SWITCH = "switch.parentcontrol_tv_block_shorts"
+SHORTS_SWITCH = "switch.parentcontrol_kind_block_shorts"
+WHO = "select.parentcontrol_tv_who_is_watching"
+PROFILE_WATCH = "sensor.parentcontrol_kind_watch_time_today"
+KIND = "kind"
+GROSS = "gross"
 OLLAMA = "binary_sensor.parentcontrol_ollama"
 PIN = "1234"
 PIN_HASH = pinlock.hash_pin(PIN)
@@ -91,15 +97,25 @@ def quiet_health_check(aioclient_mock):
     aioclient_mock.get("http://ollama.local/api/tags", json={"models": [{"name": "m"}]})
 
 
-async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, words=(), **options):
+def profiles(age=8, big_age=None):
+    """One child on both players, or a second, older child on the kids player."""
+    result = {KIND: {"name": "Kind", "person": None, "age": age}}
+    if big_age is not None:
+        result[GROSS] = {"name": "Gross", "person": None, "age": big_age}
+    return result
+
+
+async def setup(hass, min_age=16, age=8, big_age=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, words=(), **options):
+    assign = {TV: [KIND], KIDS: [GROSS if big_age is not None else KIND]}
     entry = MockConfigEntry(
         domain=DOMAIN,
-        data={CONF_OLLAMA_URL: "http://ollama.local", CONF_AGE: age},
+        data={CONF_OLLAMA_URL: "http://ollama.local"},
         options={
             CONF_MODEL: "m",
             CONF_PLAYERS: [TV, KIDS],
-            CONF_DEVICE_AGES: device_ages or {},
             CONF_PIN_HASH: PIN_HASH,
+            CONF_PROFILES: profiles(age, big_age),
+            CONF_DEVICE_PROFILES: assign,
             **options,
         },
     )
@@ -118,7 +134,10 @@ async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, val
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     for setting in settings:
-        entry.runtime_data.async_set_setting(TV, setting, True)
+        if setting == SETTING_SEEK_TO_START:
+            entry.runtime_data.async_set_device_setting(TV, setting, True)
+        else:
+            entry.runtime_data.async_set_profile_setting(KIND, setting, True)
     return entry, mock, patcher
 
 
@@ -238,8 +257,10 @@ async def test_strict_rating_blocks_when_the_check_fails(hass, pauses):
     patcher.stop()
 
 
-async def test_settings_apply_only_to_their_player(hass, pauses):
-    _, _, patcher = await setup(hass, min_age=4, source="metadaten", settings=[SETTING_STRICT])
+async def test_rules_apply_only_to_the_profiles_of_a_player(hass, pauses):
+    _, _, patcher = await setup(
+        hass, min_age=4, big_age=10, source="metadaten", settings=[SETTING_STRICT]
+    )
     await play(hass, entity=KIDS)
     assert not pauses
     await play(hass)
@@ -265,11 +286,12 @@ async def test_player_switch_applies_immediately_and_survives_reload(hass, pause
     patcher.stop()
 
 
-async def test_each_player_is_its_own_device(hass, pauses):
+async def test_each_player_and_profile_is_its_own_device(hass, pauses):
     entry, _, patcher = await setup(hass)
     devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     assert sorted(device.name for device in devices) == [
         "ParentControl",
+        "ParentControl Kind",
         "ParentControl kids",
         "ParentControl tv",
     ]
@@ -311,7 +333,7 @@ async def test_block_beats_allow(hass, pauses):
     _, _, patcher = await setup(
         hass,
         settings=[SETTING_SKIP_CHECKS],
-        **{CONF_ALLOWED: "Kanal; 0", CONF_DEVICE_BLOCKED: {TV: "Kanal"}},
+        **{CONF_ALLOWED: "Kanal; 0", CONF_PROFILE_BLOCKED: {KIND: "Kanal"}},
     )
     await play(hass)
     assert len(pauses) == 1
@@ -342,11 +364,11 @@ async def test_allowed_channel_below_its_age_gets_the_normal_check(hass, pauses)
     patcher.stop()
 
 
-async def test_device_entry_beats_global_entry(hass, pauses):
+async def test_profile_entry_beats_global_entry(hass, pauses):
     _, mock, patcher = await setup(
         hass,
         settings=[SETTING_SKIP_CHECKS],
-        **{CONF_ALLOWED: "Kanal; 12", CONF_DEVICE_ALLOWED: {TV: "Kanal; 6"}},
+        **{CONF_ALLOWED: "Kanal; 12", CONF_PROFILE_ALLOWED: {KIND: "Kanal; 6"}},
     )
     await play(hass)
     assert not mock.called
@@ -412,17 +434,18 @@ async def test_allow_action_uses_running_channel_and_clears_the_block(hass, paus
     patcher.stop()
 
 
-async def test_block_action_can_target_one_device(hass, pauses):
+async def test_block_action_can_target_one_profile(hass, pauses):
     entry, _, patcher = await setup(hass, min_age=4)
     await hass.services.async_call(
-        DOMAIN,
-        "block_channel",
-        {"channel": "Neu", "player": KIDS, "only_this_device": True},
-        blocking=True,
+        DOMAIN, "block_channel", {"channel": "Neu", "profile": "kind"}, blocking=True
     )
     await hass.async_block_till_done()
-    assert entry.options[CONF_DEVICE_BLOCKED] == {KIDS: "Neu"}
+    assert entry.options[CONF_PROFILE_BLOCKED] == {KIND: "Neu"}
     assert entry.options.get(CONF_BLOCKED, "") == ""
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "block_channel", {"channel": "Neu", "profile": "Niemand"}, blocking=True
+        )
     patcher.stop()
 
 
@@ -518,8 +541,8 @@ async def test_allowed_video_keeps_playing(hass, pauses):
     patcher.stop()
 
 
-async def test_device_age_overrides_the_default(hass, pauses):
-    _, _, patcher = await setup(hass, min_age=10, age=8, device_ages={TV: 12})
+async def test_each_profile_has_its_own_age(hass, pauses):
+    _, _, patcher = await setup(hass, min_age=10, age=12, big_age=8)
     await play(hass)
     assert not pauses
     await play(hass, entity=KIDS)
@@ -585,7 +608,7 @@ async def test_other_apps_are_ignored(hass, pauses):
     patcher.stop()
 
 
-async def test_setup_flow_creates_entry(hass, aioclient_mock):
+async def test_setup_flow_creates_entry_with_the_first_child(hass, aioclient_mock):
     aioclient_mock.get("http://ollama:11434/api/tags", json={"models": [{"name": "m"}]})
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -594,20 +617,24 @@ async def test_setup_flow_creates_entry(hass, aioclient_mock):
         result["flow_id"], {CONF_OLLAMA_URL: "http://ollama:11434"}
     )
     assert result["step_id"] == "settings"
+    answers = {CONF_MODEL: "m", CONF_PLAYERS: [TV, KIDS], CONF_AGE: 8, "name": "Siva"}
     with patch("custom_components.parentcontrol.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_MODEL: "m", CONF_PLAYERS: [TV], CONF_AGE: 8, CONF_PIN: "12a4"}
+            result["flow_id"], {**answers, CONF_PIN: "12a4"}
         )
         assert result["errors"] == {CONF_PIN: "invalid_pin"}
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_MODEL: "m", CONF_PLAYERS: [TV], CONF_AGE: 8, CONF_PIN: "4711"}
+            result["flow_id"], {**answers, CONF_PIN: "4711", "person": "person.siva"}
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_OLLAMA_URL: "http://ollama:11434", CONF_AGE: 8}
-    pin_hash = result["options"].pop(CONF_PIN_HASH)
+    assert result["data"] == {CONF_OLLAMA_URL: "http://ollama:11434"}
+    options = result["options"]
+    pin_hash = options.pop(CONF_PIN_HASH)
     assert "4711" not in pin_hash
     assert pinlock.check_pin("4711", pin_hash)
-    assert result["options"] == {CONF_MODEL: "m", CONF_PLAYERS: [TV]}
+    [profile] = options[CONF_PROFILES]
+    assert options[CONF_PROFILES][profile] == {"name": "Siva", "person": "person.siva", "age": 8}
+    assert options[CONF_DEVICE_PROFILES] == {TV: [profile], KIDS: [profile]}
 
 
 async def test_setup_flow_reports_unreachable_server(hass, aioclient_mock):
@@ -621,45 +648,92 @@ async def test_setup_flow_reports_unreachable_server(hass, aioclient_mock):
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-async def test_options_flow_stores_device_age(hass, aioclient_mock):
+def profile_choices(result):
+    """Return the profile ids offered in a form."""
+    for key, field in result["data_schema"].schema.items():
+        if str(key) == "profile":
+            return [option["value"] for option in field.config["options"]]
+    raise AssertionError("no profile field")
+
+
+async def start_options(hass, entry):
+    flow = hass.config_entries.options
+    result = await flow.async_init(entry.entry_id)
+    result = await flow.async_configure(result["flow_id"], {CONF_MODEL: "m", CONF_PLAYERS: [TV, KIDS]})
+    assert result["step_id"] == "profiles"
+    return flow, result
+
+
+async def test_options_flow_adds_and_removes_profiles(hass, aioclient_mock):
     entry, _, patcher = await setup(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"],
-        {
-            CONF_MODEL: "m",
-            CONF_PLAYERS: [TV, KIDS],
-        },
-    )
-    assert result["step_id"] == "ages"
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {KIDS: 7})
-    assert result["step_id"] == "lists"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_ALLOWED: "Kanal; abc"}
-    )
-    assert result["errors"] == {CONF_ALLOWED: "invalid_age"}
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_ALLOWED: "Kanal; 6", CONF_BLOCKED: "Andere"}
-    )
-    assert result["step_id"] == "device_lists"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_BLOCKED: "Nur TV"}
-    )
-    assert result["step_id"] == "device_lists"
-    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
-    assert result["step_id"] == "prompts"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_AGE_PROMPT: "Mein Prompt"}
-    )
+    flow, result = await start_options(hass, entry)
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "profile_add"})
+    result = await flow.async_configure(result["flow_id"], {"name": "Gross", CONF_AGE: 12})
+    assert result["step_id"] == "profiles"
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "profile_remove"})
+    [new] = [pid for pid in profile_choices(result) if pid != KIND]
+    result = await flow.async_configure(result["flow_id"], {"profile": KIND})
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "assign"})
+    result = await flow.async_configure(result["flow_id"], {TV: [new], KIDS: [new]})
+    result = await flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "profile_lists"
+    result = await flow.async_configure(result["flow_id"], {})
+    result = await flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_DEVICE_AGES] == {KIDS: 7}
-    assert entry.options[CONF_ALLOWED] == "Kanal; 6"
-    assert entry.options[CONF_DEVICE_BLOCKED] == {TV: "Nur TV", KIDS: ""}
-    assert entry.options[CONF_AGE_PROMPT] == "Mein Prompt"
-    assert entry.options[CONF_PEDAGOGY_PROMPT] == engine.DEFAULT_PEDAGOGY_PROMPT
-    assert entry.options[CONF_PIN_HASH] == PIN_HASH
-    assert entry.options[CONF_HISTORY_SIZE] == 20
     await hass.async_block_till_done()
+    assert entry.options[CONF_PROFILES] == {new: {"name": "Gross", "person": None, "age": 12}}
+    assert entry.options[CONF_DEVICE_PROFILES] == {TV: [new], KIDS: [new]}
+    devices = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert "ParentControl Kind" not in [device.name for device in devices]
+    assert "ParentControl Gross" in [device.name for device in devices]
+    patcher.stop()
+
+
+async def test_options_flow_keeps_the_last_profile(hass, aioclient_mock):
+    entry, _, patcher = await setup(hass)
+    flow, result = await start_options(hass, entry)
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "profile_remove"})
+    result = await flow.async_configure(result["flow_id"], {"profile": KIND})
+    assert result["errors"] == {"base": "last_profile"}
+    patcher.stop()
+
+
+async def test_options_flow_assigns_profiles_and_edits_their_lists(hass, aioclient_mock):
+    entry, _, patcher = await setup(hass, big_age=12)
+    flow, result = await start_options(hass, entry)
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "profile_edit"})
+    result = await flow.async_configure(result["flow_id"], {"profile": GROSS})
+    result = await flow.async_configure(result["flow_id"], {"name": "Groß", "person": "person.siva"})
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "assign"})
+    assert result["step_id"] == "assign"
+    result = await flow.async_configure(result["flow_id"], {TV: [KIND], KIDS: []})
+    assert result["errors"] == {"base": "no_profile"}
+    result = await flow.async_configure(result["flow_id"], {TV: [KIND, GROSS], KIDS: [GROSS]})
+    assert result["step_id"] == "lists"
+    result = await flow.async_configure(result["flow_id"], {CONF_ALLOWED: "Kanal; abc"})
+    assert result["errors"] == {CONF_ALLOWED: "invalid_age"}
+    result = await flow.async_configure(
+        result["flow_id"], {CONF_ALLOWED: "Kanal; 6", CONF_BLOCKED: "Andere", CONF_ALLOWED_WORDS: "Mist"}
+    )
+    assert result["step_id"] == "profile_lists"
+    result = await flow.async_configure(result["flow_id"], {CONF_BLOCKED: "Nur Kind"})
+    assert result["step_id"] == "profile_lists"
+    result = await flow.async_configure(result["flow_id"], {CONF_ALLOWED_WORDS: "blöd"})
+    assert result["step_id"] == "prompts"
+    result = await flow.async_configure(result["flow_id"], {CONF_AGE_PROMPT: "Mein Prompt"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    options = entry.options
+    assert options[CONF_PROFILES][GROSS] == {"name": "Groß", "person": "person.siva", "age": 12}
+    assert options[CONF_DEVICE_PROFILES] == {TV: [KIND, GROSS], KIDS: [GROSS]}
+    assert options[CONF_ALLOWED] == "Kanal; 6"
+    assert options[CONF_ALLOWED_WORDS] == "Mist"
+    assert options[CONF_PROFILE_BLOCKED] == {KIND: "Nur Kind", GROSS: ""}
+    assert options[CONF_PROFILE_WORDS] == {KIND: "", GROSS: "blöd"}
+    assert options[CONF_AGE_PROMPT] == "Mein Prompt"
+    assert options[CONF_PEDAGOGY_PROMPT] == engine.DEFAULT_PEDAGOGY_PROMPT
+    assert options[CONF_PIN_HASH] == PIN_HASH
+    assert options[CONF_HISTORY_SIZE] == 20
     patcher.stop()
 
 
@@ -821,20 +895,19 @@ async def test_removing_from_the_blocked_list_needs_the_pin(hass, pauses):
     patcher.stop()
 
 
-async def test_device_age_entity_sets_an_own_age(hass, pauses):
+async def test_profile_age_entity_needs_the_pin_to_raise(hass, pauses):
     entry, _, patcher = await setup(hass, min_age=10)
     context = await child_context(hass)
-    assert hass.states.get(TV_AGE).state == "8"
+    assert hass.states.get(NUMBER).state == "8"
     with pytest.raises(ServiceValidationError):
         await hass.services.async_call(
-            "number", "set_value", {ATTR_ENTITY_ID: TV_AGE, "value": 12}, blocking=True, context=context
+            "number", "set_value", {ATTR_ENTITY_ID: NUMBER, "value": 12}, blocking=True, context=context
         )
     await hass.services.async_call(
-        "number", "set_value", {ATTR_ENTITY_ID: TV_AGE, "value": 7}, blocking=True, context=context
+        "number", "set_value", {ATTR_ENTITY_ID: NUMBER, "value": 7}, blocking=True, context=context
     )
-    await hass.async_block_till_done()
-    assert entry.options[CONF_DEVICE_AGES] == {TV: 7}
-    assert hass.states.get(TV_AGE).state == "7"
+    assert hass.states.get(NUMBER).state == "7"
+    assert entry.runtime_data.profile_age(KIND) == 7
     patcher.stop()
 
 
@@ -861,7 +934,7 @@ async def test_shorts_are_blocked_on_allowed_channels_without_the_model(hass, pa
 
 async def test_shorts_play_when_the_switch_is_off(hass, pauses):
     entry, _, patcher = await setup(hass, min_age=4, short=True)
-    entry.runtime_data.async_set_setting(TV, SETTING_BLOCK_SHORTS, False)
+    entry.runtime_data.async_set_profile_setting(KIND, SETTING_BLOCK_SHORTS, False)
     await play(hass)
     assert not pauses
     patcher.stop()
@@ -914,20 +987,26 @@ async def test_failed_lookup_turns_the_yt_dlp_sensor_off(hass, pauses):
 
 
 async def test_card_finds_every_entity_through_the_attributes(hass, pauses):
-    _, _, patcher = await setup(hass, **{CONF_DEVICE_ALLOWED: {TV: "Kanal; 6"}})
+    _, _, patcher = await setup(hass, **{CONF_PROFILE_ALLOWED: {KIND: "Kanal; 6"}})
     lock = hass.states.get(LOCK).attributes
     assert lock["entitaeten"]["lock"] == LOCK
     assert lock["entitaeten"]["check"] == SWITCH
     assert lock["entitaeten"]["ollama"] == OLLAMA
     assert lock["geraete"] == [SENSOR, "sensor.parentcontrol_kids_youtube_check"]
+    assert lock["profile"] == [PROFILE_WATCH]
     assert {"kanal": "Die Maus", "alter": 5} in lock["freigegeben"]
     device = hass.states.get(SENSOR).attributes
-    assert device["entitaeten"]["block_shorts"] == SHORTS_SWITCH
-    assert device["entitaeten"]["age"] == TV_AGE
+    assert device["entitaeten"]["select"] == WHO
     assert device["entitaeten"]["history"] == HISTORY
-    assert device["freigegeben"] == [{"kanal": "Kanal", "alter": 6}]
-    assert device["gesperrt"] == []
+    assert device["entitaeten"]["seek_to_start"] == "switch.parentcontrol_tv_jump_to_start"
+    assert device["zugeordnet"] == [KIND]
     assert device["name"] == "tv"
+    profile = hass.states.get(PROFILE_WATCH).attributes
+    assert profile["name"] == "Kind"
+    assert profile["entitaeten"]["block_shorts"] == SHORTS_SWITCH
+    assert profile["entitaeten"]["age"] == NUMBER
+    assert profile["freigegeben"] == [{"kanal": "Kanal", "alter": 6}]
+    assert profile["erlaubte_woerter"] == []
     patcher.stop()
 
 
@@ -993,4 +1072,285 @@ async def test_smaller_history_size_shortens_stored_lists(hass, pauses):
     hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_HISTORY_SIZE: 5})
     await hass.async_block_till_done()
     assert len(hass.states.get(HISTORY).attributes["videos"]) == 5
+    patcher.stop()
+
+
+FIRE_TV = {"app_id": "com.amazon.firetv.youtube", "source": "YouTube"}
+
+
+async def test_youtube_is_recognized_by_app_id_and_source(hass, pauses):
+    _, mock, patcher = await setup(hass)
+    await play(hass, attributes=FIRE_TV)
+    assert hass.states.get(SENSOR).state == "keine_daten"
+    await play(hass, attributes={"source": "YouTube"})
+    assert hass.states.get(SENSOR).state == "keine_daten"
+    assert not mock.called
+    patcher.stop()
+
+
+async def test_strict_rating_pauses_youtube_without_title_after_a_grace_time(hass, pauses, freezer):
+    _, _, patcher = await setup(hass, settings=[SETTING_STRICT])
+    paused = []
+    hass.bus.async_listen("parentcontrol_paused", paused.append)
+    await play(hass, attributes=FIRE_TV)
+    freezer.tick(120)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert not pauses
+    freezer.tick(40)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert len(pauses) == 1
+    assert hass.states.get(SENSOR).attributes["sperrtext"] == (
+        "Strenge Bewertung: Das Gerät meldet keinen Videotitel."
+    )
+    assert paused[0].data["block_reason"] == "keine_daten"
+    patcher.stop()
+
+
+async def test_youtube_without_title_keeps_playing_without_strict_rating(hass, pauses, freezer):
+    _, _, patcher = await setup(hass)
+    await play(hass, attributes=FIRE_TV)
+    freezer.tick(300)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert not pauses
+    patcher.stop()
+
+
+async def setup_shared(hass, **kwargs):
+    """Both children on the TV."""
+    return await setup(
+        hass, big_age=12, **{CONF_DEVICE_PROFILES: {TV: [KIND, GROSS], KIDS: [GROSS]}}, **kwargs
+    )
+
+
+async def select(hass, option, context=None):
+    await hass.services.async_call(
+        "select", "select_option", {ATTR_ENTITY_ID: WHO, "option": option}, blocking=True, context=context
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def test_shared_device_uses_the_youngest_age_and_any_block(hass, pauses):
+    entry, _, patcher = await setup_shared(hass, min_age=10, age=8)
+    await play(hass)
+    assert len(pauses) == 1
+    assert hass.states.get(SENSOR).attributes["alter"] == 8
+    assert hass.states.get(SENSOR).attributes["profil_namen"] == ["Kind", "Gross"]
+    patcher.stop()
+
+
+async def test_shared_device_blocks_shorts_if_one_child_must_not_see_them(hass, pauses):
+    entry, _, patcher = await setup_shared(hass, min_age=4, short=True)
+    entry.runtime_data.async_set_profile_setting(KIND, SETTING_BLOCK_SHORTS, False)
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_shared_device_skips_checks_only_if_every_child_allows_it(hass, pauses):
+    entry, mock, patcher = await setup_shared(hass, min_age=16, **{CONF_ALLOWED: "Kanal; 0"})
+    monitor = entry.runtime_data
+    monitor.async_set_profile_setting(KIND, SETTING_SKIP_CHECKS, True)
+    await play(hass)
+    assert mock.called
+    monitor.async_set_profile_setting(GROSS, SETTING_SKIP_CHECKS, True)
+    await play(hass, attributes={**VIDEO, "media_title": "Anderes"})
+    assert hass.states.get(SENSOR).attributes["quelle"] == "freigabeliste"
+    patcher.stop()
+
+
+async def test_choosing_one_child_needs_the_pin_and_automatic_does_not(hass, pauses):
+    _, _, patcher = await setup_shared(hass, min_age=10, age=8)
+    context = await child_context(hass)
+    assert hass.states.get(WHO).state == "Automatic"
+    assert hass.states.get(WHO).attributes["options"] == ["Automatic", "Kind", "Gross", "Unrestricted"]
+    with pytest.raises(ServiceValidationError):
+        await select(hass, "Gross", context)
+    await unlock(hass)
+    await select(hass, "Gross", context)
+    await play(hass)
+    assert not pauses
+    assert hass.states.get(SENSOR).attributes["profil_namen"] == ["Gross"]
+    await hass.services.async_call("lock", "lock", {ATTR_ENTITY_ID: LOCK}, blocking=True)
+    await select(hass, "Automatic", context)
+    assert hass.states.get(WHO).state == "Automatic"
+    patcher.stop()
+
+
+async def test_unrestricted_checks_nothing_and_counts_nothing(hass, pauses, freezer):
+    _, mock, patcher = await setup(hass, min_age=16)
+    await unlock(hass)
+    await select(hass, "Unrestricted")
+    await play(hass)
+    assert not pauses
+    assert not mock.called
+    assert hass.states.get(SENSOR).state == "unbeschraenkt"
+    assert hass.states.get(HISTORY).attributes["videos"][0]["status"] == "unbeschraenkt"
+    for _ in range(25):
+        freezer.tick(5)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert hass.states.get(WATCH).state == "2"
+    assert hass.states.get(PROFILE_WATCH).state == "0"
+    assert hass.states.get("sensor.parentcontrol_videos_today").state == "0"
+    patcher.stop()
+
+
+async def test_choice_falls_back_to_automatic_when_the_device_turns_off(hass, pauses):
+    _, _, patcher = await setup(hass, min_age=4)
+    await unlock(hass)
+    await select(hass, "Unrestricted")
+    await play(hass)
+    await play(hass, "off")
+    assert hass.states.get(WHO).state == "Automatic"
+    patcher.stop()
+
+
+async def test_choice_falls_back_to_automatic_at_midnight(hass, pauses, freezer):
+    _, _, patcher = await setup(hass, min_age=4)
+    await unlock(hass)
+    await select(hass, "Unrestricted")
+    freezer.tick(timedelta(days=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(WHO).state == "Automatic"
+    patcher.stop()
+
+
+async def test_watch_time_counts_for_every_child_on_a_shared_device(hass, pauses, freezer):
+    _, _, patcher = await setup_shared(hass, min_age=4)
+    await play(hass)
+    for _ in range(25):
+        freezer.tick(5)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert hass.states.get(PROFILE_WATCH).state == "2"
+    assert hass.states.get("sensor.parentcontrol_gross_watch_time_today").state == "2"
+    patcher.stop()
+
+
+async def test_allowed_words_do_not_block(hass, pauses):
+    _, _, patcher = await setup(
+        hass, min_age=4, profanity=True, words=["Mist", "Mistkerl"],
+        settings=[SETTING_BLOCK_PROFANITY], **{CONF_ALLOWED_WORDS: "mist"},
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    assert hass.states.get(SENSOR).attributes["sperrtext"] == "Schimpfwörter erkannt: Mistkerl."
+    patcher.stop()
+
+
+async def test_allowed_prefix_covers_longer_words(hass, pauses):
+    _, _, patcher = await setup(
+        hass, min_age=4, profanity=True, words=["Mist", "Mistkerl"],
+        settings=[SETTING_BLOCK_PROFANITY], **{CONF_PROFILE_WORDS: {KIND: "Mist*"}},
+    )
+    await play(hass)
+    assert not pauses
+    assert hass.states.get(SENSOR).attributes["schimpfwoerter"] is False
+    patcher.stop()
+
+
+async def test_censored_words_can_never_be_allowed(hass, pauses):
+    _, _, patcher = await setup(
+        hass, min_age=4, profanity=True, words=["[ __ ]"],
+        settings=[SETTING_BLOCK_PROFANITY], **{CONF_ALLOWED_WORDS: "*"},
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_profile_without_inherited_words_blocks_global_words(hass, pauses):
+    entry, _, patcher = await setup(
+        hass, min_age=4, profanity=True, words=["Mist"],
+        settings=[SETTING_BLOCK_PROFANITY], **{CONF_ALLOWED_WORDS: "Mist"},
+    )
+    entry.runtime_data.async_set_profile_setting(KIND, "inherit_words", False)
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_word_must_be_allowed_for_every_child_on_a_shared_device(hass, pauses):
+    _, _, patcher = await setup_shared(
+        hass, min_age=4, profanity=True, words=["Mist"],
+        settings=[SETTING_BLOCK_PROFANITY], **{CONF_PROFILE_WORDS: {GROSS: "Mist"}},
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_model_report_without_words_still_blocks(hass, pauses):
+    _, _, patcher = await setup(
+        hass, min_age=4, profanity=True, settings=[SETTING_BLOCK_PROFANITY],
+        **{CONF_ALLOWED_WORDS: "*"},
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    patcher.stop()
+
+
+async def test_allowing_a_word_needs_the_pin_and_taking_it_back_does_not(hass, pauses):
+    entry, _, patcher = await setup(hass)
+    context = await child_context(hass)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "allow_word", {"word": "Mist"}, blocking=True, context=context
+        )
+    await unlock(hass)
+    await hass.services.async_call(
+        DOMAIN, "allow_word", {"word": "Mist", "profile": "Kind"}, blocking=True, context=context
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_PROFILE_WORDS] == {KIND: "Mist"}
+    await hass.services.async_call("lock", "lock", {ATTR_ENTITY_ID: LOCK}, blocking=True)
+    await hass.services.async_call(
+        DOMAIN, "remove_word", {"word": "mist", "profile": "Kind"}, blocking=True, context=context
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_PROFILE_WORDS] == {KIND: ""}
+    patcher.stop()
+
+
+async def test_inheriting_global_lists_again_needs_the_pin(hass, pauses):
+    entry, _, patcher = await setup(hass)
+    context = await child_context(hass)
+    switch = "switch.parentcontrol_kind_inherit_global_allowed_channels"
+    await hass.services.async_call("switch", "turn_off", {ATTR_ENTITY_ID: switch}, blocking=True, context=context)
+    assert hass.states.get(switch).state == "off"
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("switch", "turn_on", {ATTR_ENTITY_ID: switch}, blocking=True, context=context)
+    patcher.stop()
+
+
+async def test_profile_without_inherited_channels_ignores_global_allowed_list(hass, pauses):
+    entry, mock, patcher = await setup(
+        hass, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: "Kanal; 0"}
+    )
+    entry.runtime_data.async_set_profile_setting(KIND, "inherit_channels", False)
+    await play(hass)
+    assert mock.called
+    patcher.stop()
+
+
+async def test_history_records_the_active_profiles(hass, pauses):
+    _, _, patcher = await setup_shared(hass, min_age=4)
+    await play(hass)
+    video = hass.states.get(HISTORY).attributes["videos"][0]
+    assert video["profile"] == [KIND, GROSS]
+    assert video["profil_namen"] == ["Kind", "Gross"]
+    patcher.stop()
+
+
+async def test_choice_made_while_the_device_is_off_stays(hass, pauses):
+    _, _, patcher = await setup(hass, min_age=4)
+    await play(hass, "off")
+    await unlock(hass)
+    await select(hass, "Unrestricted")
+    await play(hass, "off", attributes={})
+    assert hass.states.get(WHO).state == "Unrestricted"
     patcher.stop()

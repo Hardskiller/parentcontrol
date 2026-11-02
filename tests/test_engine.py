@@ -208,3 +208,18 @@ def test_model_words_are_ignored_when_it_finds_no_swearing():
         rating = engine.rate(Video("T"), "u", "m", "s")
     assert not rating.profanity
     assert rating.profanity_words == []
+
+
+def test_allowed_words_match_whole_words_or_a_prefix():
+    patterns = engine.parse_words("Mist\nblöd*\n\n")
+    assert patterns == ["mist", "blöd*"]
+    assert engine.word_allowed("MIST", patterns)
+    assert not engine.word_allowed("Mistkerl", patterns)
+    assert engine.word_allowed("Blödmann", patterns)
+    assert not engine.word_allowed("[ __ ]", ["*"])
+
+
+def test_words_are_added_once_and_removed_ignoring_case():
+    text = engine.add_word("Mist", "mist")
+    assert text == "mist"
+    assert engine.remove_word("Mist\nblöd", "MIST") == "blöd"

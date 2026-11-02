@@ -10,12 +10,14 @@
       },
       "settings": {
         "title": "Set up the check",
-        "description": "The rating comes from a language model and is not an official age rating. Adults open the settings on the dashboard with the PIN; without it, users without admin rights cannot weaken the protection.",
+        "description": "The rating comes from a language model and is not an official age rating. The first child applies to all selected devices; add more later in the options. Adults open the settings on the dashboard with the PIN.",
         "data": {
           "model": "Model",
           "players": "Monitored media players",
-          "age": "Default age",
-          "pin": "PIN (4 to 8 digits)"
+          "age": "Age of the child",
+          "pin": "PIN (4 to 8 digits)",
+          "name": "Name of the child",
+          "person": "Person in Home Assistant (optional)"
         }
       }
     },
@@ -40,10 +42,6 @@
           "history_size": "Stored videos per device"
         }
       },
-      "ages": {
-        "title": "Own age per device",
-        "description": "Leave empty to use the default age."
-      },
       "prompts": {
         "title": "Prompts",
         "description": "An empty field restores the default text. After a change, videos are checked again.",
@@ -53,34 +51,76 @@
         }
       },
       "lists": {
-        "title": "Channel lists for all devices",
-        "description": "One channel per line. For allowed channels, add the minimum age after a semicolon, for example: Die Maus; 0",
+        "title": "Lists for all children",
+        "description": "One entry per line. For allowed channels, the minimum age after a semicolon, for example: Die Maus; 0. Allowed swear words match whole words; \"darn*\" allows every word starting with darn.",
         "data": {
           "allowed_channels": "Allowed channels",
-          "blocked_channels": "Blocked channels"
+          "blocked_channels": "Blocked channels",
+          "allowed_words": "Allowed swear words"
         }
       },
-      "device_lists": {
-        "title": "Channel lists for {device}",
-        "description": "Applies on top of the global lists. The device entry comes first, and a block always wins.",
+      "profiles": {
+        "title": "Child profiles",
+        "description": "Profiles: {profiles}",
+        "menu_options": {
+          "profile_add": "Add a child",
+          "profile_edit": "Rename a child",
+          "profile_remove": "Remove a child",
+          "assign": "Continue to assignment"
+        }
+      },
+      "profile_add": {
+        "title": "Add a child",
+        "data": {
+          "name": "Name of the child",
+          "person": "Person in Home Assistant (optional)",
+          "age": "Age"
+        }
+      },
+      "profile_edit": {
+        "title": "Choose a child",
+        "data": {
+          "profile": "Child"
+        }
+      },
+      "profile_details": {
+        "title": "Rename a child",
+        "data": {
+          "name": "Name of the child",
+          "person": "Person in Home Assistant (optional)"
+        }
+      },
+      "profile_remove": {
+        "title": "Remove a child",
+        "data": {
+          "profile": "Child"
+        }
+      },
+      "assign": {
+        "title": "Assign children to devices",
+        "description": "Choose per device which children watch there. With several, the strictest rule applies."
+      },
+      "profile_lists": {
+        "title": "Lists for {profile}",
+        "description": "Applies in addition to the lists for all children. Whether the global allowed channels and words are inherited is set on the profile.",
         "data": {
           "allowed_channels": "Allowed channels",
-          "blocked_channels": "Blocked channels"
+          "blocked_channels": "Blocked channels",
+          "allowed_words": "Allowed swear words"
         }
       }
     },
     "error": {
       "no_players": "Select at least one media player.",
       "invalid_age": "The allowed list contains an invalid age. Use 0 to 18.",
-      "invalid_pin": "The PIN must have 4 to 8 digits."
+      "invalid_pin": "The PIN must have 4 to 8 digits.",
+      "last_profile": "At least one child must remain.",
+      "no_profile": "Every device needs at least one child."
     }
   },
   "entity": {
     "number": {
-      "age": {
-        "name": "Default age"
-      },
-      "device_age": {
+      "profile_age": {
         "name": "Age"
       }
     },
@@ -105,6 +145,12 @@
       },
       "block_shorts": {
         "name": "Block Shorts"
+      },
+      "inherit_channels": {
+        "name": "Inherit global allowed channels"
+      },
+      "inherit_words": {
+        "name": "Inherit global words"
       }
     },
     "sensor": {
@@ -117,7 +163,8 @@
           "frei": "Allowed",
           "inaktiv": "Inactive",
           "keine_daten": "No data",
-          "nicht_geprueft": "Unchecked"
+          "nicht_geprueft": "Unchecked",
+          "unbeschraenkt": "Unrestricted"
         }
       },
       "videos": {
@@ -137,6 +184,9 @@
       },
       "history": {
         "name": "Latest videos"
+      },
+      "profile_watch_time": {
+        "name": "Watch time today"
       }
     },
     "lock": {
@@ -150,6 +200,11 @@
       },
       "yt_dlp": {
         "name": "YouTube lookup"
+      }
+    },
+    "select": {
+      "who": {
+        "name": "Who is watching?"
       }
     }
   },
@@ -166,13 +221,13 @@
           "name": "Media player",
           "description": "Provides the running channel and the device for the device list."
         },
-        "only_this_device": {
-          "name": "Only this device",
-          "description": "Adds the channel to the device list instead of the global list."
-        },
         "age": {
           "name": "Age",
           "description": "The channel is allowed from this age."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child. Empty applies to all children."
         }
       }
     },
@@ -188,9 +243,9 @@
           "name": "Media player",
           "description": "Provides the running channel and the device for the device list."
         },
-        "only_this_device": {
-          "name": "Only this device",
-          "description": "Adds the channel to the device list instead of the global list."
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child. Empty applies to all children."
         }
       }
     },
@@ -210,9 +265,37 @@
           "name": "Media player",
           "description": "Provides the running channel and the device for the device list."
         },
-        "only_this_device": {
-          "name": "Only this device",
-          "description": "Adds the channel to the device list instead of the global list."
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child. Empty applies to all children."
+        }
+      }
+    },
+    "allow_word": {
+      "name": "Allow swear word",
+      "description": "Allows a swear word for all children or one child. Needs the PIN.",
+      "fields": {
+        "word": {
+          "name": "Word",
+          "description": "A whole word; with * at the end every word that starts like this."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child. Empty applies to all children."
+        }
+      }
+    },
+    "remove_word": {
+      "name": "Forbid swear word again",
+      "description": "Removes an allowed swear word.",
+      "fields": {
+        "word": {
+          "name": "Word",
+          "description": "A whole word; with * at the end every word that starts like this."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child. Empty applies to all children."
         }
       }
     }

@@ -27,7 +27,9 @@ class SettingsLock(LockEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_translation_key = "settings"
-    _unrecorded_attributes = frozenset({"entitaeten", "geraete", "freigegeben", "gesperrt"})
+    _unrecorded_attributes = frozenset(
+        {"entitaeten", "geraete", "profile", "freigegeben", "gesperrt", "erlaubte_woerter"}
+    )
 
     def __init__(self, entry: ParentControlConfigEntry) -> None:
         self._entry = entry
@@ -63,7 +65,11 @@ class SettingsLock(LockEntity):
                 entity_ids(self.hass, self._entry, player).get("status")
                 for player in self._monitor.players
             ],
-            **self._monitor.channel_lists(),
+            "profile": [
+                entity_ids(self.hass, self._entry, profile=profile).get("profile")
+                for profile in self._monitor.profiles
+            ],
+            **self._monitor.lists(),
         }
 
     async def async_unlock(self, **kwargs: Any) -> None:

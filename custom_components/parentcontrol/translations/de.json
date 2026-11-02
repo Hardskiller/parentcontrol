@@ -10,12 +10,14 @@
       },
       "settings": {
         "title": "Prüfung einrichten",
-        "description": "Die Einschätzung stammt von einem Sprachmodell und ist keine offizielle Altersfreigabe. Mit dem PIN öffnen Erwachsene am Dashboard die Einstellungen; ohne PIN können Benutzer ohne Adminrechte den Schutz nicht lockern.",
+        "description": "Die Einschätzung stammt von einem Sprachmodell und ist keine offizielle Altersfreigabe. Das erste Kind gilt für alle ausgewählten Geräte, weitere legst du danach in den Optionen an. Mit dem PIN öffnen Erwachsene am Dashboard die Einstellungen.",
         "data": {
           "model": "Modell",
           "players": "Überwachte Media Player",
-          "age": "Standardalter",
-          "pin": "PIN (4 bis 8 Ziffern)"
+          "age": "Alter des Kindes",
+          "pin": "PIN (4 bis 8 Ziffern)",
+          "name": "Name des Kindes",
+          "person": "Person in Home Assistant (optional)"
         }
       }
     },
@@ -40,10 +42,6 @@
           "history_size": "Gespeicherte Videos pro Gerät"
         }
       },
-      "ages": {
-        "title": "Eigenes Alter pro Gerät",
-        "description": "Leer lassen, damit das Standardalter gilt."
-      },
       "prompts": {
         "title": "Prompts",
         "description": "Ein leeres Feld stellt den Standardtext wieder her. Nach einer Änderung werden Videos neu geprüft.",
@@ -53,34 +51,76 @@
         }
       },
       "lists": {
-        "title": "Kanallisten für alle Geräte",
-        "description": "Ein Kanal pro Zeile. In der Freigabe nach einem Semikolon das Mindestalter, zum Beispiel: Die Maus; 0",
+        "title": "Listen für alle Kinder",
+        "description": "Ein Eintrag pro Zeile. In der Freigabe nach einem Semikolon das Mindestalter, zum Beispiel: Die Maus; 0. Erlaubte Schimpfwörter gelten als ganzes Wort, „Mist*“ erlaubt alle Wörter, die mit Mist beginnen.",
         "data": {
           "allowed_channels": "Freigegebene Kanäle",
-          "blocked_channels": "Gesperrte Kanäle"
+          "blocked_channels": "Gesperrte Kanäle",
+          "allowed_words": "Erlaubte Schimpfwörter"
         }
       },
-      "device_lists": {
-        "title": "Kanallisten für {device}",
-        "description": "Gilt zusätzlich zu den globalen Listen. Der Geräteeintrag geht vor, eine Sperre gewinnt immer.",
+      "profiles": {
+        "title": "Kinderprofile",
+        "description": "Profile: {profiles}",
+        "menu_options": {
+          "profile_add": "Kind hinzufügen",
+          "profile_edit": "Kind umbenennen",
+          "profile_remove": "Kind entfernen",
+          "assign": "Weiter zur Zuordnung"
+        }
+      },
+      "profile_add": {
+        "title": "Kind hinzufügen",
+        "data": {
+          "name": "Name des Kindes",
+          "person": "Person in Home Assistant (optional)",
+          "age": "Alter"
+        }
+      },
+      "profile_edit": {
+        "title": "Kind auswählen",
+        "data": {
+          "profile": "Kind"
+        }
+      },
+      "profile_details": {
+        "title": "Kind umbenennen",
+        "data": {
+          "name": "Name des Kindes",
+          "person": "Person in Home Assistant (optional)"
+        }
+      },
+      "profile_remove": {
+        "title": "Kind entfernen",
+        "data": {
+          "profile": "Kind"
+        }
+      },
+      "assign": {
+        "title": "Kinder den Geräten zuordnen",
+        "description": "Wähle pro Gerät, welche Kinder dort schauen. Bei mehreren gilt die strengste Regel."
+      },
+      "profile_lists": {
+        "title": "Listen für {profile}",
+        "description": "Gilt zusätzlich zu den Listen für alle Kinder. Ob die globalen Freigaben und Wörter übernommen werden, stellst du am Profil ein.",
         "data": {
           "allowed_channels": "Freigegebene Kanäle",
-          "blocked_channels": "Gesperrte Kanäle"
+          "blocked_channels": "Gesperrte Kanäle",
+          "allowed_words": "Erlaubte Schimpfwörter"
         }
       }
     },
     "error": {
       "no_players": "Wähle mindestens einen Media Player.",
       "invalid_age": "In der Freigabe steht ein ungültiges Alter. Erlaubt ist 0 bis 18.",
-      "invalid_pin": "Der PIN muss aus 4 bis 8 Ziffern bestehen."
+      "invalid_pin": "Der PIN muss aus 4 bis 8 Ziffern bestehen.",
+      "last_profile": "Mindestens ein Kind muss bleiben.",
+      "no_profile": "Jedes Gerät braucht mindestens ein Kind."
     }
   },
   "entity": {
     "number": {
-      "age": {
-        "name": "Standardalter"
-      },
-      "device_age": {
+      "profile_age": {
         "name": "Alter"
       }
     },
@@ -105,6 +145,12 @@
       },
       "block_shorts": {
         "name": "Shorts sperren"
+      },
+      "inherit_channels": {
+        "name": "Globale Freigaben übernehmen"
+      },
+      "inherit_words": {
+        "name": "Globale Wörter übernehmen"
       }
     },
     "sensor": {
@@ -117,7 +163,8 @@
           "frei": "Frei",
           "inaktiv": "Inaktiv",
           "keine_daten": "Keine Daten",
-          "nicht_geprueft": "Nicht geprüft"
+          "nicht_geprueft": "Nicht geprüft",
+          "unbeschraenkt": "Unbeschränkt"
         }
       },
       "videos": {
@@ -137,6 +184,9 @@
       },
       "history": {
         "name": "Letzte Videos"
+      },
+      "profile_watch_time": {
+        "name": "Schauzeit heute"
       }
     },
     "lock": {
@@ -150,6 +200,11 @@
       },
       "yt_dlp": {
         "name": "YouTube-Abfrage"
+      }
+    },
+    "select": {
+      "who": {
+        "name": "Wer schaut?"
       }
     }
   },
@@ -166,13 +221,13 @@
           "name": "Media Player",
           "description": "Liefert den laufenden Kanal und das Gerät für die Geräteliste."
         },
-        "only_this_device": {
-          "name": "Nur dieses Gerät",
-          "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
-        },
         "age": {
           "name": "Alter",
           "description": "Ab diesem Alter gilt die Freigabe."
+        },
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes. Leer gilt für alle Kinder."
         }
       }
     },
@@ -188,9 +243,9 @@
           "name": "Media Player",
           "description": "Liefert den laufenden Kanal und das Gerät für die Geräteliste."
         },
-        "only_this_device": {
-          "name": "Nur dieses Gerät",
-          "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes. Leer gilt für alle Kinder."
         }
       }
     },
@@ -210,9 +265,37 @@
           "name": "Media Player",
           "description": "Liefert den laufenden Kanal und das Gerät für die Geräteliste."
         },
-        "only_this_device": {
-          "name": "Nur dieses Gerät",
-          "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes. Leer gilt für alle Kinder."
+        }
+      }
+    },
+    "allow_word": {
+      "name": "Schimpfwort erlauben",
+      "description": "Erlaubt ein Schimpfwort für alle Kinder oder ein Kind. Braucht den PIN.",
+      "fields": {
+        "word": {
+          "name": "Wort",
+          "description": "Ein ganzes Wort; mit * am Ende alle Wörter, die so beginnen."
+        },
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes. Leer gilt für alle Kinder."
+        }
+      }
+    },
+    "remove_word": {
+      "name": "Schimpfwort wieder verbieten",
+      "description": "Entfernt ein erlaubtes Schimpfwort.",
+      "fields": {
+        "word": {
+          "name": "Wort",
+          "description": "Ein ganzes Wort; mit * am Ende alle Wörter, die so beginnen."
+        },
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes. Leer gilt für alle Kinder."
         }
       }
     }

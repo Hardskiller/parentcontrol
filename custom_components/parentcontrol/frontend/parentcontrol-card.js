@@ -1,30 +1,37 @@
-// ParentControl dashboard card: device list, PIN entry, settings and history.
+// ParentControl dashboard card: device list, PIN entry, profiles, settings and history.
 // The integration serves this file and loads it on every dashboard.
 
 const TEXTS = {
   de: {
     history: "Verlauf",
     general: "Allgemein",
+    profiles: "Profile",
     lock: "Sperren",
     unlock: "Entsperren",
     enterPin: "PIN eingeben",
     cancel: "Abbrechen",
     back: "Zurück",
     age: "Alter",
-    defaultAge: "Standardalter",
     check: "Prüfung",
     minutes: "min",
+    watchToday: "Schauzeit heute",
     allowed: "Freigegebene Kanäle",
     blocked: "Gesperrte Kanäle",
+    words: "Erlaubte Schimpfwörter",
     channel: "Kanal",
+    word: "Wort",
     allow: "Freigeben",
+    allowWord: "Erlauben",
     block: "Sperren",
     remove: "Entfernen",
+    forAll: "Für alle",
+    onlyFor: "Nur für",
     noVideo: "Kein Video",
     noHistory: "Noch keine Videos",
     noEntries: "Keine Einträge",
     noLock: "ParentControl wurde nicht gefunden.",
-    deviceOnly: "Diese Listen gelten nur für dieses Gerät, zusätzlich zu den Listen unter Allgemein.",
+    profileLists: "Gilt zusätzlich zu den Listen unter Allgemein. Die gesperrten Kanäle unter Allgemein gelten immer.",
+    globalLists: "Gilt für alle Kinder. Freigaben und Wörter übernehmen nur Profile, bei denen das Vererben an ist.",
     fromAge: "ab",
     today: "Heute",
     services: "Dienste",
@@ -33,6 +40,9 @@ const TEXTS = {
     pedagogyLabel: "Pädagogik",
     blockLabel: "Gesperrt",
     wordsLabel: "Schimpfwörter",
+    noWords: "Die Wörter wurden erst ab Version 0.3.3 gespeichert.",
+    who: "Wer schaut?",
+    unrestrictedHint: "Unbeschränkt: keine Prüfung bis zum Ausschalten",
     status: {
       frei: "Frei",
       blockiert: "Blockiert",
@@ -41,6 +51,7 @@ const TEXTS = {
       keine_daten: "Keine Daten",
       inaktiv: "Inaktiv",
       aus: "Prüfung aus",
+      unbeschraenkt: "Unbeschränkt",
     },
     reasons: {
       alter: "zu jung",
@@ -50,6 +61,7 @@ const TEXTS = {
       nicht_geprueft: "nicht geprüft",
       kanal_gesperrt: "Kanal gesperrt",
       short: "Short",
+      keine_daten: "kein Titel gemeldet",
     },
     settings: {
       seek_to_start: "An den Anfang springen",
@@ -58,6 +70,8 @@ const TEXTS = {
       strict: "Strenge Bewertung",
       skip_checks: "Freigegebene Kanäle ohne Prüfung",
       block_shorts: "Shorts sperren",
+      inherit_channels: "Globale Freigaben übernehmen",
+      inherit_words: "Globale Wörter übernehmen",
     },
     stats: {
       videos: "Videos",
@@ -84,26 +98,33 @@ const TEXTS = {
   en: {
     history: "History",
     general: "General",
+    profiles: "Profiles",
     lock: "Lock",
     unlock: "Unlock",
     enterPin: "Enter PIN",
     cancel: "Cancel",
     back: "Back",
     age: "Age",
-    defaultAge: "Default age",
     check: "Check",
     minutes: "min",
+    watchToday: "Watch time today",
     allowed: "Allowed channels",
     blocked: "Blocked channels",
+    words: "Allowed swear words",
     channel: "Channel",
+    word: "Word",
     allow: "Allow",
+    allowWord: "Allow",
     block: "Block",
     remove: "Remove",
+    forAll: "For all",
+    onlyFor: "Only for",
     noVideo: "No video",
     noHistory: "No videos yet",
     noEntries: "No entries",
     noLock: "ParentControl was not found.",
-    deviceOnly: "These lists apply only to this device, in addition to the lists under General.",
+    profileLists: "Applies in addition to the lists under General. The blocked channels under General always apply.",
+    globalLists: "Applies to all children. Profiles inherit allowed channels and words only when inheriting is on.",
     fromAge: "from",
     today: "Today",
     services: "Services",
@@ -112,6 +133,9 @@ const TEXTS = {
     pedagogyLabel: "Education",
     blockLabel: "Blocked",
     wordsLabel: "Swear words",
+    noWords: "Words are only stored since version 0.3.3.",
+    who: "Who is watching?",
+    unrestrictedHint: "Unrestricted: no check until the device turns off",
     status: {
       frei: "Allowed",
       blockiert: "Blocked",
@@ -120,6 +144,7 @@ const TEXTS = {
       keine_daten: "No data",
       inaktiv: "Idle",
       aus: "Check off",
+      unbeschraenkt: "Unrestricted",
     },
     reasons: {
       alter: "too young",
@@ -129,6 +154,7 @@ const TEXTS = {
       nicht_geprueft: "not checked",
       kanal_gesperrt: "channel blocked",
       short: "Short",
+      keine_daten: "no title reported",
     },
     settings: {
       seek_to_start: "Jump to start",
@@ -137,6 +163,8 @@ const TEXTS = {
       strict: "Strict rating",
       skip_checks: "Allowed channels skip checks",
       block_shorts: "Block Shorts",
+      inherit_channels: "Inherit global allowed channels",
+      inherit_words: "Inherit global words",
     },
     stats: {
       videos: "Videos",
@@ -162,14 +190,8 @@ const TEXTS = {
   },
 };
 
-const SETTINGS = [
-  "seek_to_start",
-  "require_pedagogy",
-  "block_profanity",
-  "strict",
-  "skip_checks",
-  "block_shorts",
-];
+const RULES = ["require_pedagogy", "block_profanity", "strict", "skip_checks", "block_shorts"];
+const INHERIT = ["inherit_channels", "inherit_words"];
 const STATS = ["videos", "approved", "valuable", "skipped"];
 const HEALTH = ["ollama", "yt_dlp"];
 
@@ -181,6 +203,7 @@ const STATUS_ICONS = {
   keine_daten: ["mdi:help-circle-outline", "var(--secondary-text-color)"],
   inaktiv: ["mdi:sleep", "var(--secondary-text-color)"],
   aus: ["mdi:shield-off", "var(--secondary-text-color)"],
+  unbeschraenkt: ["mdi:shield-off-outline", "var(--warning-color, #ffa600)"],
 };
 
 const OPTIONS = ["show_valuable", "show_profanity", "show_shorts", "show_age", "show_watch_time"];
@@ -211,12 +234,16 @@ class ParentControlCard extends HTMLElement {
     this._player = null;
     this._pin = "";
     this._pinTarget = null;
+    // A change that waits for the PIN, for example choosing a child.
+    this._pending = null;
+    this._choice = null;
     this._message = "";
     this._drafts = {};
     this._expanded = new Set();
     this._limit = 0;
     this._signature = "";
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
+    this.shadowRoot.addEventListener("change", (event) => this._onChange(event));
     this.shadowRoot.addEventListener("input", (event) => {
       if (event.target.dataset.draft) this._drafts[event.target.dataset.draft] = event.target.value;
     });
@@ -254,9 +281,11 @@ class ParentControlCard extends HTMLElement {
   }
 
   _devices(lock) {
-    return (lock.attributes.geraete || [])
-      .map((id) => this._hass.states[id])
-      .filter(Boolean);
+    return (lock.attributes.geraete || []).map((id) => this._hass.states[id]).filter(Boolean);
+  }
+
+  _profiles(lock) {
+    return (lock.attributes.profile || []).map((id) => this._hass.states[id]).filter(Boolean);
   }
 
   _isOpen(lock) {
@@ -267,6 +296,14 @@ class ParentControlCard extends HTMLElement {
     return id ? this._hass.states[id] : undefined;
   }
 
+  _name(device) {
+    return this._config.names?.[device.entity_id] || device.attributes.name;
+  }
+
+  _show(option) {
+    return this._config[option] !== false;
+  }
+
   // Only redraw when something shown changed, and never while typing.
   _render() {
     if (!this._hass || !this._config) return;
@@ -275,9 +312,9 @@ class ParentControlCard extends HTMLElement {
       ? [
           lock.entity_id,
           ...Object.values(lock.attributes.entitaeten || {}),
-          ...this._devices(lock).flatMap((device) => [
-            device.entity_id,
-            ...Object.values(device.attributes.entitaeten || {}),
+          ...[...this._devices(lock), ...this._profiles(lock)].flatMap((state) => [
+            state.entity_id,
+            ...Object.values(state.attributes.entitaeten || {}),
           ]),
         ]
       : [];
@@ -287,6 +324,7 @@ class ParentControlCard extends HTMLElement {
       this._player,
       this._pin,
       this._pinTarget,
+      this._choice,
       this._message,
       this._hass.user?.is_admin,
       [...this._expanded],
@@ -294,7 +332,7 @@ class ParentControlCard extends HTMLElement {
     ]);
     if (signature === this._signature) return;
     const active = this.shadowRoot.activeElement;
-    if (active && active.tagName === "INPUT") return;
+    if (active && (active.tagName === "INPUT" || active.tagName === "SELECT")) return;
     this._signature = signature;
     if (!lock) {
       this._draw(`<div class="empty">${this._t.noLock}</div>`);
@@ -308,6 +346,7 @@ class ParentControlCard extends HTMLElement {
     if (this._pinTarget) body = this._pinPad(lock);
     else if (this._view === "device") body = this._deviceView(lock);
     else if (this._view === "history") body = this._historyView(lock);
+    else if (this._view === "profiles") body = this._profilesView(lock);
     else if (this._view === "general") body = this._generalView(lock);
     else body = this._listView(lock);
     this._draw(this._header(lock) + this._messageBar() + body);
@@ -330,6 +369,7 @@ class ParentControlCard extends HTMLElement {
       <div class="title">${escape(this._config.title || "ParentControl")}</div>
       <div class="actions">
         <button class="chip" data-action="open" data-target="history"><ha-icon icon="mdi:history"></ha-icon>${t.history}</button>
+        <button class="chip" data-action="open" data-target="profiles"><ha-icon icon="mdi:account-child"></ha-icon>${t.profiles}</button>
         <button class="chip" data-action="open" data-target="general"><ha-icon icon="mdi:cog"></ha-icon>${t.general}</button>
         ${lockButton}
       </div>
@@ -347,14 +387,6 @@ class ParentControlCard extends HTMLElement {
     return `<ha-icon class="status" icon="${icon}" style="color:${color}"></ha-icon>`;
   }
 
-  _name(device) {
-    return this._config.names?.[device.entity_id] || device.attributes.name;
-  }
-
-  _show(option) {
-    return this._config[option] !== false;
-  }
-
   _markers(attributes) {
     const t = this._t;
     let html = "";
@@ -367,20 +399,53 @@ class ParentControlCard extends HTMLElement {
     return html;
   }
 
-  // The block reason always shows; the model's rating only when expanded.
+  // Collapsed: only the kind of block. Expanded: the full block text with the
+  // swear words found, other words found, and the model's rating.
   _reasonLines(attributes, full) {
     const t = this._t;
+    const reason = attributes.sperrgrund;
+    const label = reason && (t.reasons[reason] || reason);
+    if (!full)
+      return label ? `<div class="sub why">${t.blockLabel}: ${escape(label)}</div>` : "";
     let html = "";
     // Entries from before 0.3.3 have no block text, only the reason key.
-    const blockText =
-      attributes.sperrtext || (attributes.sperrgrund && (t.reasons[attributes.sperrgrund] || attributes.sperrgrund));
-    if (blockText) html += `<div class="sub why">${t.blockLabel}: ${escape(blockText)}</div>`;
+    const blockText = attributes.sperrtext || label;
+    if (blockText) html += `<div class="sub why wrap">${t.blockLabel}: ${escape(blockText)}</div>`;
     const words = attributes.schimpfwoerter_liste || [];
-    if (words.length && attributes.sperrgrund !== "schimpfwoerter")
-      html += `<div class="sub">${t.wordsLabel}: ${escape(words.join(", "))}</div>`;
-    if (full && attributes.grund)
+    if (reason === "schimpfwoerter" && !attributes.sperrtext)
+      html += `<div class="sub wrap">${t.noWords}</div>`;
+    if (words.length && reason !== "schimpfwoerter")
+      html += `<div class="sub wrap">${t.wordsLabel}: ${escape(words.join(", "))}</div>`;
+    if (attributes.grund)
       html += `<div class="sub wrap">${t.reasonLabel}: ${escape(attributes.grund)}</div>`;
     return html;
+  }
+
+  _avatar(profile) {
+    const picture = profile?.attributes.bild;
+    const name = profile?.attributes.name || "?";
+    return picture
+      ? `<img class="avatar" src="${escape(picture)}" alt="">`
+      : `<span class="avatar">${escape(name.slice(0, 1).toUpperCase())}</span>`;
+  }
+
+  _profileById(lock, id) {
+    return this._profiles(lock).find((profile) => profile.attributes.profil === id);
+  }
+
+  // The dropdown sits in the device list; only "Automatic" works without the PIN.
+  _whoSelect(device) {
+    const select = this._state(device.attributes.entitaeten?.select);
+    if (!select) return "";
+    const options = select.attributes.options || [];
+    return `<select class="who" data-entity="${escape(select.entity_id)}" title="${this._t.who}">
+      ${options
+        .map(
+          (label) =>
+            `<option value="${escape(label)}" ${label === select.state ? "selected" : ""}>${escape(label)}</option>`,
+        )
+        .join("")}
+    </select>`;
   }
 
   _listView(lock) {
@@ -388,19 +453,27 @@ class ParentControlCard extends HTMLElement {
     const rows = this._devices(lock).map((device) => {
       const a = device.attributes;
       const watch = this._state(a.entitaeten?.watch_time)?.state;
-      const age = this._state(a.entitaeten?.age)?.state ?? a.alter;
-      return `<button class="row" data-action="open" data-target="device" data-player="${escape(device.entity_id)}">
-        ${this._statusIcon(device.state)}
-        <div class="main">
-          <div class="name">${escape(this._name(device))}</div>
-          <div class="sub">${a.titel ? escape(a.titel) : t.noVideo}</div>
-        </div>
-        <div class="markers">${this._markers(a)}</div>
-        <div class="meta">
-          ${this._show("show_age") ? `<div>${t.age} ${escape(age)}</div>` : ""}
-          ${this._show("show_watch_time") ? `<div>${escape(watch ?? 0)} ${t.minutes}</div>` : ""}
-        </div>
-      </button>`;
+      const avatars = (a.profile || []).map((id) => this._avatar(this._profileById(lock, id))).join("");
+      const who =
+        a.auswahl === "unrestricted"
+          ? `<div class="sub warn">${t.unrestrictedHint}</div>`
+          : `<div class="sub">${avatars} ${escape((a.profil_namen || []).join(", "))}</div>`;
+      return `<div class="row">
+        <button class="main open" data-action="open" data-target="device" data-player="${escape(device.entity_id)}">
+          ${this._statusIcon(device.state)}
+          <div class="main">
+            <div class="name">${escape(this._name(device))}</div>
+            <div class="sub">${a.titel ? escape(a.titel) : t.noVideo}</div>
+            ${who}
+          </div>
+          <div class="markers">${this._markers(a)}</div>
+          <div class="meta">
+            ${this._show("show_age") && a.alter != null ? `<div>${t.age} ${escape(a.alter)}</div>` : ""}
+            ${this._show("show_watch_time") ? `<div>${escape(watch ?? 0)} ${t.minutes}</div>` : ""}
+          </div>
+        </button>
+        ${this._whoSelect(device)}
+      </div>`;
     });
     return `<div class="list">${rows.join("")}</div>`;
   }
@@ -448,28 +521,51 @@ class ParentControlCard extends HTMLElement {
     </div>`;
   }
 
-  _lists(allowed, blocked, player) {
+  // Channel lists and allowed words of all children (profile null) or of one child.
+  _lists(attributes, profile) {
     const t = this._t;
-    const scope = player || "global";
-    const target = player ? `data-player="${escape(player)}"` : "";
-    const item = (entry, list) => `<li>
+    const scope = profile || "global";
+    const target = profile ? `data-profile="${escape(profile)}"` : "";
+    const channel = (entry, list) => `<li>
         <span>${escape(entry.kanal)}${list === "allowed" ? ` <small>${t.fromAge} ${entry.alter}</small>` : ""}</span>
         <button class="icon" title="${t.remove}" data-action="remove" data-list="${list}" data-channel="${escape(entry.kanal)}" ${target}><ha-icon icon="mdi:close"></ha-icon></button>
       </li>`;
-    const list = (entries, name) =>
-      entries.length
-        ? `<ul>${entries.map((entry) => item(entry, name)).join("")}</ul>`
-        : `<div class="hint">${t.noEntries}</div>`;
+    const word = (entry) => `<li>
+        <span>${escape(entry)}</span>
+        <button class="icon" title="${t.remove}" data-action="remove-word" data-word="${escape(entry)}" ${target}><ha-icon icon="mdi:close"></ha-icon></button>
+      </li>`;
+    const list = (entries, render) =>
+      entries.length ? `<ul>${entries.map(render).join("")}</ul>` : `<div class="hint">${t.noEntries}</div>`;
     return `<div class="section">
-      ${player ? `<div class="hint">${t.deviceOnly}</div>` : ""}
-      <h3>${t.allowed}</h3>${list(allowed || [], "allowed")}
-      <h3>${t.blocked}</h3>${list(blocked || [], "blocked")}
+      <div class="hint">${profile ? t.profileLists : t.globalLists}</div>
+      <h3>${t.allowed}</h3>${list(attributes.freigegeben || [], (entry) => channel(entry, "allowed"))}
+      <h3>${t.blocked}</h3>${list(attributes.gesperrt || [], (entry) => channel(entry, "blocked"))}
       <div class="add">
         <input data-draft="channel-${scope}" placeholder="${t.channel}" value="${escape(this._drafts[`channel-${scope}`] || "")}">
         <input data-draft="age-${scope}" class="age" type="number" min="0" max="18" placeholder="${t.age}" value="${escape(this._drafts[`age-${scope}`] || "")}">
         <button class="chip" data-action="add" data-allow="1" data-scope="${scope}" ${target}>${t.allow}</button>
         <button class="chip" data-action="add" data-allow="0" data-scope="${scope}" ${target}>${t.block}</button>
       </div>
+      <h3>${t.words}</h3>${list(attributes.erlaubte_woerter || [], word)}
+      <div class="add">
+        <input data-draft="word-${scope}" placeholder="${t.word}" value="${escape(this._drafts[`word-${scope}`] || "")}">
+        <button class="chip" data-action="add-word" data-scope="${scope}" ${target}>${t.allowWord}</button>
+      </div>
+    </div>`;
+  }
+
+  // Allow or block from the history: for all children or only for the ones watching.
+  _choiceRow(entry, key) {
+    const t = this._t;
+    if (this._choice?.key !== key) return "";
+    const profiles = (entry.profile || []).map(
+      (id, index) =>
+        `<button class="chip" data-action="choose" data-profile="${escape(id)}">${t.onlyFor} ${escape(entry.profil_namen?.[index] || id)}</button>`,
+    );
+    return `<div class="choice">
+      <button class="chip ${this._choice.allow ? "" : "primary"}" data-action="choose">${t.forAll}</button>
+      ${profiles.join("")}
+      <button class="link" data-action="choose-cancel">${t.cancel}</button>
     </div>`;
   }
 
@@ -491,22 +587,26 @@ class ParentControlCard extends HTMLElement {
           minute: "2-digit",
         });
         const age = entry.mindestalter != null ? ` · ${t.fromAge} ${entry.mindestalter}` : "";
+        const who = entry.profil_namen?.length ? ` · ${escape(entry.profil_namen.join(", "))}` : "";
         return `<li>
-          ${this._statusIcon(entry.status)}
-          <div class="main" data-action="expand" data-key="${escape(key)}">
-            <div class="name ${expanded ? "wrap" : ""}">${escape(entry.titel)}</div>
-            <div class="sub">${time}${showDevice ? ` · ${escape(entry.geraet)}` : ""} · ${escape(entry.kanal)}${age}</div>
-            ${this._reasonLines(entry, expanded)}
+          <div class="entry">
+            ${this._statusIcon(entry.status)}
+            <div class="main" data-action="expand" data-key="${escape(key)}">
+              <div class="name ${expanded ? "wrap" : ""}">${escape(entry.titel)}</div>
+              <div class="sub">${time}${showDevice ? ` · ${escape(entry.geraet)}` : ""} · ${escape(entry.kanal)}${age}${who}</div>
+              ${this._reasonLines(entry, expanded)}
+            </div>
+            <div class="markers">${this._markers(entry)}</div>
+            ${
+              entry.kanal
+                ? `<div class="buttons">
+              <button class="icon" title="${t.allow}" data-action="ask" data-allow="1" data-key="${escape(key)}" data-channel="${escape(entry.kanal)}"><ha-icon icon="mdi:check"></ha-icon></button>
+              <button class="icon" title="${t.block}" data-action="ask" data-allow="0" data-key="${escape(key)}" data-channel="${escape(entry.kanal)}"><ha-icon icon="mdi:cancel"></ha-icon></button>
+            </div>`
+                : ""
+            }
           </div>
-          <div class="markers">${this._markers(entry)}</div>
-          ${
-            entry.kanal
-              ? `<div class="buttons">
-            <button class="icon" title="${t.allow}" data-action="list-channel" data-allow="1" data-channel="${escape(entry.kanal)}"><ha-icon icon="mdi:check"></ha-icon></button>
-            <button class="icon" title="${t.block}" data-action="list-channel" data-allow="0" data-channel="${escape(entry.kanal)}"><ha-icon icon="mdi:cancel"></ha-icon></button>
-          </div>`
-              : ""
-          }
+          ${this._choiceRow(entry, key)}
         </li>`;
       })
       .join("")}</ul>${more}`;
@@ -519,14 +619,17 @@ class ParentControlCard extends HTMLElement {
     const a = device.attributes;
     const ids = a.entitaeten || {};
     const history = this._state(ids.history)?.attributes.videos || [];
+    // The running video folds out like a history entry.
+    const key = `current|${a.titel}`;
+    const expanded = this._expanded.has(key);
     const current = a.titel
       ? `<div class="section current">
           ${this._statusIcon(device.state)}
-          <div class="main">
+          <div class="main" data-action="expand" data-key="${escape(key)}">
             <div class="name">${escape(a.titel)}</div>
             <div class="sub">${escape(a.kanal)}${a.mindestalter != null ? ` · ${t.fromAge} ${a.mindestalter}` : ""}</div>
-            ${this._reasonLines(a, true)}
-            ${a.paedagogik_grund ? `<div class="sub">${t.pedagogyLabel}: ${escape(a.paedagogik_grund)}</div>` : ""}
+            ${this._reasonLines(a, expanded)}
+            ${expanded && a.paedagogik_grund ? `<div class="sub wrap">${t.pedagogyLabel}: ${escape(a.paedagogik_grund)}</div>` : ""}
           </div>
           <div class="markers">${this._markers(a)}</div>
         </div>`
@@ -534,11 +637,30 @@ class ParentControlCard extends HTMLElement {
     return `<div class="crumb"><button class="link" data-action="back"><ha-icon icon="mdi:arrow-left"></ha-icon>${t.back}</button><span>${escape(this._name(device))}</span></div>
       ${current}
       <div class="section">
-        ${this._stepper(ids.age, t.age)}
-        ${SETTINGS.map((setting) => this._toggle(ids[setting], t.settings[setting])).join("")}
+        <div class="stepper"><span>${t.who}</span>${this._whoSelect(device)}</div>
+        ${this._toggle(ids.seek_to_start, t.settings.seek_to_start)}
       </div>
-      ${this._lists(a.freigegeben, a.gesperrt, a.player)}
-      <div class="section"><h3>${t.history}</h3>${this._historyItems(history, false)}</div>`;
+      <div class="section"><h3>${t.history}</h3>${this._historyItems(
+        history.map((entry) => ({ ...entry, geraet: this._name(device) })),
+        false,
+      )}</div>`;
+  }
+
+  _profilesView(lock) {
+    const t = this._t;
+    const sections = this._profiles(lock).map((profile) => {
+      const a = profile.attributes;
+      const ids = a.entitaeten || {};
+      return `<div class="section profile">
+        <div class="profile-head">${this._avatar(profile)}<div class="main"><div class="name">${escape(a.name)}</div>
+          <div class="sub">${t.watchToday}: ${escape(profile.state)} ${t.minutes}</div></div></div>
+        ${this._stepper(ids.age, t.age)}
+        ${[...RULES, ...INHERIT].map((setting) => this._toggle(ids[setting], t.settings[setting])).join("")}
+        ${this._lists(a, a.profil)}
+      </div>`;
+    });
+    return `<div class="crumb"><button class="link" data-action="back"><ha-icon icon="mdi:arrow-left"></ha-icon>${t.back}</button><span>${t.profiles}</span></div>
+      ${sections.join("")}`;
   }
 
   _historyView(lock) {
@@ -573,11 +695,8 @@ class ParentControlCard extends HTMLElement {
         `<div class="line"><span>${t.stats[stat]}</span><span>${escape(this._state(ids[stat])?.state ?? 0)}</span></div>`,
     ).join("");
     return `<div class="crumb"><button class="link" data-action="back"><ha-icon icon="mdi:arrow-left"></ha-icon>${t.back}</button><span>${t.general}</span></div>
-      <div class="section">
-        ${this._toggle(ids.check, t.check)}
-        ${this._stepper(ids.age, t.defaultAge)}
-      </div>
-      ${this._lists(lock.attributes.freigegeben, lock.attributes.gesperrt, null)}
+      <div class="section">${this._toggle(ids.check, t.check)}</div>
+      ${this._lists(lock.attributes, null)}
       <div class="section"><h3>${t.today}</h3>${stats}</div>
       <div class="section"><h3>${t.services}</h3>${health}</div>`;
   }
@@ -594,6 +713,30 @@ class ParentControlCard extends HTMLElement {
       this._signature = "";
       this._render();
     }
+  }
+
+  _redraw() {
+    this._signature = "";
+    this._render();
+  }
+
+  async _onChange(event) {
+    const select = event.target.closest("select.who");
+    if (!select) return;
+    const lock = this._lock();
+    const state = this._state(select.dataset.entity);
+    const label = select.value;
+    select.blur();
+    const call = { entity_id: select.dataset.entity, option: label };
+    if (state?.attributes.werte?.[label] === "auto" || this._isOpen(lock)) {
+      await this._call("select", "select_option", call);
+      return;
+    }
+    // Choosing a child or "Unrestricted" waits for the PIN.
+    this._pending = ["select", "select_option", call];
+    this._pinTarget = this._view;
+    this._pin = "";
+    this._redraw();
   }
 
   async _onClick(event) {
@@ -616,6 +759,7 @@ class ParentControlCard extends HTMLElement {
       case "back":
         this._view = "list";
         this._limit = 0;
+        this._choice = null;
         break;
       case "more":
         this._limit = Number(data.limit);
@@ -635,6 +779,7 @@ class ParentControlCard extends HTMLElement {
         break;
       case "pin-cancel":
         this._pinTarget = null;
+        this._pending = null;
         this._pin = "";
         break;
       case "pin-ok": {
@@ -644,8 +789,10 @@ class ParentControlCard extends HTMLElement {
         if (await this._call("lock", "unlock", { entity_id: lock.entity_id, code })) {
           this._pinTarget = null;
           this._view = target;
-          this._signature = "";
-          this._render();
+          const pending = this._pending;
+          this._pending = null;
+          if (pending) await this._call(...pending);
+          this._redraw();
         }
         return;
       }
@@ -666,8 +813,14 @@ class ParentControlCard extends HTMLElement {
       }
       case "remove": {
         const payload = { list: data.list, channel: data.channel };
-        if (data.player) Object.assign(payload, { player: data.player, only_this_device: true });
+        if (data.profile) payload.profile = data.profile;
         await this._call("parentcontrol", "remove_channel", payload);
+        return;
+      }
+      case "remove-word": {
+        const payload = { word: data.word };
+        if (data.profile) payload.profile = data.profile;
+        await this._call("parentcontrol", "remove_word", payload);
         return;
       }
       case "add": {
@@ -677,25 +830,43 @@ class ParentControlCard extends HTMLElement {
         const payload = { channel };
         const age = this._drafts[`age-${data.scope}`];
         if (allow && age !== undefined && age !== "") payload.age = Number(age);
-        if (data.player) Object.assign(payload, { player: data.player, only_this_device: true });
+        if (data.profile) payload.profile = data.profile;
         if (await this._call("parentcontrol", allow ? "allow_channel" : "block_channel", payload)) {
           this._drafts[`channel-${data.scope}`] = "";
           this._drafts[`age-${data.scope}`] = "";
-          this._signature = "";
-          this._render();
+          this._redraw();
         }
         return;
       }
-      case "list-channel":
-        await this._call("parentcontrol", data.allow === "1" ? "allow_channel" : "block_channel", {
-          channel: data.channel,
-        });
+      case "add-word": {
+        const word = (this._drafts[`word-${data.scope}`] || "").trim();
+        if (!word) return;
+        const payload = { word };
+        if (data.profile) payload.profile = data.profile;
+        if (await this._call("parentcontrol", "allow_word", payload)) {
+          this._drafts[`word-${data.scope}`] = "";
+          this._redraw();
+        }
         return;
+      }
+      case "ask":
+        this._choice = { key: data.key, allow: data.allow === "1", channel: data.channel };
+        break;
+      case "choose-cancel":
+        this._choice = null;
+        break;
+      case "choose": {
+        const choice = this._choice;
+        this._choice = null;
+        const payload = { channel: choice.channel };
+        if (data.profile) payload.profile = data.profile;
+        await this._call("parentcontrol", choice.allow ? "allow_channel" : "block_channel", payload);
+        return;
+      }
       default:
         return;
     }
-    this._signature = "";
-    this._render();
+    this._redraw();
   }
 }
 
@@ -707,16 +878,21 @@ const STYLE = `
   .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 16px;
     background: var(--secondary-background-color); font-size: 0.9em; }
+  .chip.primary { background: var(--primary-color); color: var(--text-primary-color, #fff); }
   .chip ha-icon { --mdc-icon-size: 18px; }
   .message { margin-top: 10px; padding: 8px 12px; border-radius: 8px; cursor: pointer;
     background: var(--error-color, #db4437); color: var(--text-primary-color, #fff); }
   .list { margin-top: 8px; }
-  .row, .history li, .current { display: flex; align-items: center; gap: 12px; width: 100%;
-    padding: 10px 0; border-bottom: 1px solid var(--divider-color); text-align: left; }
-  .row:last-child, .history li:last-child { border-bottom: none; }
+  .row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--divider-color); }
+  .row:last-child, .history > li:last-child { border-bottom: none; }
+  .open, .entry, .current { display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 10px 0; text-align: left; }
+  .history > li { border-bottom: 1px solid var(--divider-color); }
+  .current { border-bottom: 1px solid var(--divider-color); }
   .main { flex: 1; min-width: 0; }
   .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
   .sub { color: var(--secondary-text-color); font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; }
+  .warn { color: var(--warning-color, #ffa600); }
   .meta { text-align: right; color: var(--secondary-text-color); font-size: 0.9em; white-space: nowrap; }
   .markers { display: flex; gap: 2px; }
   .marker { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
@@ -724,15 +900,24 @@ const STYLE = `
   .marker.profanity { color: var(--warning-color, #ffa600); }
   .why, .wrap { white-space: normal; }
   .why { color: var(--error-color, #db4437); }
-  .history .main { cursor: pointer; }
+  .history .main, .current .main { cursor: pointer; }
   .history .name:not(.wrap), .history .sub:not(.why):not(.wrap) { white-space: nowrap; }
   .more { margin-top: 8px; }
+  .avatar { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    border-radius: 50%; object-fit: cover; vertical-align: middle; font-size: 0.7em; font-weight: 500;
+    background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .profile-head .avatar { width: 40px; height: 40px; font-size: 1.1em; }
+  .profile-head { display: flex; align-items: center; gap: 12px; }
+  .profile { border-top: 1px solid var(--divider-color); padding-top: 12px; }
+  select.who { flex: none; max-width: 40%; padding: 6px 8px; border-radius: 8px; font: inherit;
+    border: 1px solid var(--divider-color); background: var(--card-background-color); color: var(--primary-text-color); }
+  .choice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 10px 36px; }
   .crumb { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-weight: 500; }
   .link { display: inline-flex; align-items: center; gap: 4px; color: var(--primary-color); }
   .section { margin-top: 12px; }
   h3 { margin: 12px 0 4px; font-size: 1em; font-weight: 500; }
   ul { list-style: none; margin: 0; padding: 0; }
-  .section > ul > li { display: flex; align-items: center; justify-content: space-between;
+  .section > ul:not(.history) > li { display: flex; align-items: center; justify-content: space-between;
     padding: 4px 0; border-bottom: 1px solid var(--divider-color); }
   small { color: var(--secondary-text-color); }
   .icon { padding: 6px; border-radius: 50%; color: var(--secondary-text-color); }
@@ -778,9 +963,7 @@ class ParentControlCardEditor extends HTMLElement {
 
   _devices() {
     const lock = findLock(this._hass, this._config);
-    return (lock?.attributes.geraete || [])
-      .map((id) => this._hass.states[id])
-      .filter(Boolean);
+    return (lock?.attributes.geraete || []).map((id) => this._hass.states[id]).filter(Boolean);
   }
 
   _update() {
@@ -843,5 +1026,5 @@ window.customCards = window.customCards || [];
 window.customCards.push({
   type: "parentcontrol-card",
   name: "ParentControl",
-  description: "Devices, PIN, settings and history of ParentControl.",
+  description: "Devices, PIN, profiles, settings and history of ParentControl.",
 });

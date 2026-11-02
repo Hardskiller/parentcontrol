@@ -1,0 +1,54 @@
+blueprint:
+  name: ParentControl – notify on block
+  description: >-
+    Sends a push notification when ParentControl pauses a video. The message
+    names the device, the title and the kind of block; swear words are not
+    listed. Tapping the notification can open a dashboard.
+  domain: automation
+  source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/notify_on_block.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: Device of the Home Assistant app that receives the notification.
+      selector:
+        device:
+          integration: mobile_app
+    dashboard:
+      name: Dashboard path
+      description: Opened when the notification is tapped, for example /lovelace/kids. Empty opens the app.
+      default: ""
+      selector:
+        text:
+
+mode: queued
+
+trigger:
+  - trigger: event
+    event_type: parentcontrol_paused
+
+variables:
+  dashboard: !input dashboard
+  reasons:
+    alter: zu jung
+    paedagogik: nicht pädagogisch wertvoll
+    schimpfwoerter: Schimpfwörter
+    keine_untertitel: keine Untertitel
+    nicht_geprueft: Prüfung fehlgeschlagen
+    kanal_gesperrt: Kanal gesperrt
+    short: Short
+    keine_daten: kein Titel gemeldet
+  reason: "{{ reasons.get(trigger.event.data.block_reason, trigger.event.data.block_reason) }}"
+  device: "{{ state_attr(trigger.event.data.entity_id, 'friendly_name') or trigger.event.data.entity_id }}"
+  profiles: "{{ trigger.event.data.profiles | default([]) | join(', ') }}"
+
+action:
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "ParentControl: {{ reason }}"
+    message: >-
+      „{{ trigger.event.data.title }}“ auf {{ device }}{{ ' (' ~ profiles ~ ')' if profiles else '' }}
+      wurde pausiert.
+    data:
+      url: "{{ dashboard if dashboard else '/' }}"
+      clickAction: "{{ dashboard if dashboard else '/' }}"
