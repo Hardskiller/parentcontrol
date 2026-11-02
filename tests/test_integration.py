@@ -9,6 +9,8 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -105,7 +107,7 @@ def profiles(age=8, big_age=None):
     return result
 
 
-async def setup(hass, min_age=16, age=8, big_age=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, words=(), **options):
+async def setup(hass, min_age=16, age=8, big_age=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, words=(), transcript="", **options):
     assign = {TV: [KIND], KIDS: [GROSS if big_age is not None else KIND]}
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -126,7 +128,11 @@ async def setup(hass, min_age=16, age=8, big_age=None, side_effect=None, valuabl
     rate_patcher = patch.object(
         engine, "rate", side_effect=side_effect, return_value=rating
     )
-    meta = engine.Metadata(failed=True) if meta_failed else engine.Metadata("id", short=short)
+    meta = (
+        engine.Metadata(failed=True)
+        if meta_failed
+        else engine.Metadata("id", short=short, transcript=transcript)
+    )
     meta_patcher = patch.object(engine, "fetch_metadata", return_value=meta)
     mock = rate_patcher.start()
     meta_patcher.start()
@@ -674,7 +680,8 @@ async def test_options_flow_adds_and_removes_profiles(hass, aioclient_mock):
     [new] = [pid for pid in profile_choices(result) if pid != KIND]
     result = await flow.async_configure(result["flow_id"], {"profile": KIND})
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "assign"})
-    result = await flow.async_configure(result["flow_id"], {TV: [new], KIDS: [new]})
+    result = await flow.async_configure(result["flow_id"], {"profiles": [new]})
+    result = await flow.async_configure(result["flow_id"], {"profiles": [new]})
     result = await flow.async_configure(result["flow_id"], {})
     assert result["step_id"] == "profile_lists"
     result = await flow.async_configure(result["flow_id"], {})
@@ -705,10 +712,13 @@ async def test_options_flow_assigns_profiles_and_edits_their_lists(hass, aioclie
     result = await flow.async_configure(result["flow_id"], {"profile": GROSS})
     result = await flow.async_configure(result["flow_id"], {"name": "Groß", "person": "person.siva"})
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "assign"})
-    assert result["step_id"] == "assign"
-    result = await flow.async_configure(result["flow_id"], {TV: [KIND], KIDS: []})
+    assert result["step_id"] == "assign_player"
+    assert result["description_placeholders"] == {"device": "tv"}
+    result = await flow.async_configure(result["flow_id"], {"profiles": [KIND, GROSS]})
+    assert result["description_placeholders"] == {"device": "kids"}
+    result = await flow.async_configure(result["flow_id"], {"profiles": []})
     assert result["errors"] == {"base": "no_profile"}
-    result = await flow.async_configure(result["flow_id"], {TV: [KIND, GROSS], KIDS: [GROSS]})
+    result = await flow.async_configure(result["flow_id"], {"profiles": [GROSS]})
     assert result["step_id"] == "lists"
     result = await flow.async_configure(result["flow_id"], {CONF_ALLOWED: "Kanal; abc"})
     assert result["errors"] == {CONF_ALLOWED: "invalid_age"}
@@ -1353,4 +1363,263 @@ async def test_choice_made_while_the_device_is_off_stays(hass, pauses):
     await select(hass, "Unrestricted")
     await play(hass, "off", attributes={})
     assert hass.states.get(WHO).state == "Unrestricted"
+    patcher.stop()
+
+
+
+def unique(hass, domain, suffix):
+    """Find an entity by the end of its unique id."""
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    return er.async_get(hass).async_get_entity_id(domain, DOMAIN, f"{entry.entry_id}_{suffix}")
+
+
+def set_limit(entry, minutes, profile=KIND):
+    for key in ("limit_weekday", "limit_weekend"):
+        entry.runtime_data.async_set_profile_value(profile, key, minutes)
+
+
+def set_window(entry, start, end, profile=KIND):
+    monitor = entry.runtime_data
+    for day in ("weekday", "weekend"):
+        monitor.async_set_profile_value(profile, f"window_{day}_start", start)
+        monitor.async_set_profile_value(profile, f"window_{day}_end", end)
+
+
+async def tick(hass, freezer, seconds, step=5):
+    for _ in range(seconds // step):
+        freezer.tick(step)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+
+def hhmm(minutes_from_now):
+    moment = dt_util.now() + timedelta(minutes=minutes_from_now)
+    return f"{moment.hour:02d}:{moment.minute:02d}"
+
+
+async def test_limit_pauses_youtube_and_warns_before(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass, min_age=4)
+    set_limit(entry, 10)
+    events = {"warning": [], "reached": []}
+    hass.bus.async_listen("parentcontrol_limit_warning", events["warning"].append)
+    hass.bus.async_listen("parentcontrol_limit_reached", events["reached"].append)
+    await play(hass)
+    await tick(hass, freezer, 330)
+    assert len(events["warning"]) == 1
+    assert events["warning"][0].data["reason"] == "zeitlimit"
+    assert not pauses
+    await tick(hass, freezer, 300)
+    assert len(pauses) >= 1
+    assert hass.states.get(SENSOR).attributes["sperrgrund"] == "zeitlimit"
+    assert len(events["reached"]) == 1
+    assert hass.states.get(unique(hass, "sensor", "profile_kind_remaining")).state == "0"
+    patcher.stop()
+
+
+async def test_bonus_time_needs_the_pin_and_lets_the_child_watch_again(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass, min_age=4)
+    set_limit(entry, 5)
+    await play(hass)
+    await tick(hass, freezer, 330)
+    assert hass.states.get(SENSOR).attributes["sperrgrund"] == "zeitlimit"
+    context = await child_context(hass)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "add_time", {"profile": "Kind", "minutes": 15}, blocking=True, context=context
+        )
+    await unlock(hass)
+    await hass.services.async_call(
+        DOMAIN, "add_time", {"profile": "Kind", "minutes": 15}, blocking=True, context=context
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).state != "blockiert"
+    assert entry.runtime_data.remaining_minutes(KIND) >= 14
+    patcher.stop()
+
+
+async def test_bonus_time_ends_at_midnight(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass, min_age=4)
+    set_limit(entry, 5)
+    entry.runtime_data.async_add_time(KIND, 15)
+    freezer.tick(timedelta(days=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert entry.runtime_data.bonus_minutes(KIND) == 0
+    patcher.stop()
+
+
+async def test_raising_or_removing_the_limit_needs_the_pin(hass, pauses):
+    entry, _, patcher = await setup(hass)
+    set_limit(entry, 60)
+    context = await child_context(hass)
+    limit = unique(hass, "number", "profile_kind_limit_weekday")
+    for value in (90, 0):
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                "number", "set_value", {ATTR_ENTITY_ID: limit, "value": value}, blocking=True, context=context
+            )
+    await hass.services.async_call(
+        "number", "set_value", {ATTR_ENTITY_ID: limit, "value": 30}, blocking=True, context=context
+    )
+    assert hass.states.get(limit).state == "30"
+    patcher.stop()
+
+
+async def test_outside_the_viewing_time_youtube_is_paused(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: "Kanal; 0"})
+    set_window(entry, hhmm(60), hhmm(120))
+    await play(hass)
+    assert len(pauses) == 1
+    assert hass.states.get(SENSOR).attributes["sperrtext"] == "Außerhalb der Schauzeit."
+    patcher.stop()
+
+
+async def test_inside_the_viewing_time_youtube_plays_and_warns_before_the_end(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass, min_age=4)
+    set_window(entry, hhmm(-60), hhmm(4))
+    warnings = []
+    hass.bus.async_listen("parentcontrol_limit_warning", warnings.append)
+    await play(hass)
+    await tick(hass, freezer, 10)
+    assert not pauses
+    assert warnings and warnings[0].data["reason"] == "schauzeit"
+    patcher.stop()
+
+
+async def test_widening_the_viewing_time_needs_the_pin(hass, pauses):
+    entry, _, patcher = await setup(hass)
+    set_window(entry, "15:00", "19:00")
+    context = await child_context(hass)
+    start = unique(hass, "time", "profile_kind_window_weekday_start")
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "time", "set_value", {ATTR_ENTITY_ID: start, "time": "14:00:00"}, blocking=True, context=context
+        )
+    await hass.services.async_call(
+        "time", "set_value", {ATTR_ENTITY_ID: start, "time": "16:00:00"}, blocking=True, context=context
+    )
+    assert hass.states.get(start).state == "16:00:00"
+    patcher.stop()
+
+
+async def test_unrestricted_ignores_limit_and_viewing_time(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4)
+    set_window(entry, hhmm(60), hhmm(120))
+    await unlock(hass)
+    await select(hass, "Unrestricted")
+    await play(hass)
+    assert not pauses
+    patcher.stop()
+
+
+async def test_shared_device_pauses_when_one_child_reached_its_limit(hass, pauses, freezer):
+    entry, _, patcher = await setup_shared(hass, min_age=4)
+    set_limit(entry, 5, GROSS)
+    await play(hass)
+    await tick(hass, freezer, 330)
+    assert hass.states.get(SENSOR).attributes["sperrgrund"] == "zeitlimit"
+    assert entry.runtime_data.youtube_minutes(KIND) == entry.runtime_data.youtube_minutes(GROSS)
+    patcher.stop()
+
+
+async def test_other_apps_do_not_count_for_the_limit(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass, min_age=4)
+    await play(hass, attributes={**VIDEO, "app_name": "Netflix"})
+    await tick(hass, freezer, 130)
+    assert entry.runtime_data.youtube_minutes(KIND) == 0
+    assert hass.states.get(PROFILE_WATCH).state == "2"
+    patcher.stop()
+
+
+async def test_allowed_video_plays_on_for_the_children_watching(hass, pauses):
+    plays = async_mock_service(hass, "media_player", "media_play")
+    entry, _, patcher = await setup(hass)
+    await play(hass)
+    assert len(pauses) == 1
+    context = await child_context(hass)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(DOMAIN, "allow_video", {"player": TV}, blocking=True, context=context)
+    await hass.services.async_call(DOMAIN, "allow_video", {"player": TV}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).state == "frei"
+    assert len(plays) == 1
+    videos = hass.states.get(PROFILE_WATCH).attributes["erlaubte_videos"]
+    assert videos == [{"schluessel": "Titel\nKanal", "titel": "Titel", "kanal": "Kanal", "video_id": "id"}]
+    await hass.services.async_call(DOMAIN, "remove_video", {"video": "Titel\nKanal"}, blocking=True, context=context)
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).state == "blockiert"
+    patcher.stop()
+
+
+async def test_allowed_video_still_obeys_shorts(hass, pauses):
+    entry, _, patcher = await setup(hass, short=True)
+    await play(hass)
+    entry.runtime_data.async_allow_video(TV, [KIND])
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).attributes["sperrgrund"] == "short"
+    patcher.stop()
+
+
+async def test_paused_event_carries_the_video_link(hass, pauses):
+    _, _, patcher = await setup(hass)
+    paused = []
+    hass.bus.async_listen("parentcontrol_paused", paused.append)
+    await play(hass)
+    assert paused[0].data["url"] == "https://www.youtube.com/watch?v=id"
+    assert paused[0].data["profile_ids"] == [KIND]
+    patcher.stop()
+
+
+async def test_transcript_of_a_blocked_video_needs_the_pin(hass, pauses):
+    _, _, patcher = await setup(hass, transcript="Ein langer Text")
+    await play(hass)
+    video = hass.states.get(HISTORY).attributes["videos"][0]
+    assert video["schluessel"] == "Titel\nKanal"
+    context = await child_context(hass)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "get_transcript", {"video": video["schluessel"]}, blocking=True, context=context, return_response=True
+        )
+    response = await hass.services.async_call(
+        DOMAIN, "get_transcript", {"video": video["schluessel"]}, blocking=True, return_response=True
+    )
+    assert response == {"transkript": "Ein langer Text"}
+    patcher.stop()
+
+
+async def test_transcript_of_an_allowed_video_is_not_kept(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4, transcript="Text")
+    await play(hass)
+    assert entry.runtime_data.transcript("Titel\nKanal") is None
+    patcher.stop()
+
+
+async def test_week_and_daily_report_count_per_child(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass)
+    set_limit(entry, 30)
+    await play(hass)
+    await tick(hass, freezer, 130)
+    week = hass.states.get(PROFILE_WATCH).attributes["woche"]
+    assert week[-1]["minuten"] == 2
+    assert week[-1]["limit"] == 30
+    assert week[-1]["gesperrt"] == 1
+    report = hass.states.get(unique(hass, "sensor", "daily_report"))
+    assert report.state == "1"
+    assert report.attributes["kinder"][0] | {} == {
+        "name": "Kind", "youtube_minuten": 2, "limit": 30, "bonus": 0, "videos": 1, "gesperrt": 1,
+    }
+    assert report.attributes["gesperrte_videos"][0]["titel"] == "Titel"
+    assert report.attributes["gesperrte_videos"][0]["art"] == "alter"
+    patcher.stop()
+
+
+async def test_week_keeps_seven_days(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass, min_age=4)
+    await play(hass)
+    for _ in range(9):
+        await tick(hass, freezer, 70)
+        freezer.tick(timedelta(days=1))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert len(entry.runtime_data.week(KIND)) <= 7
     patcher.stop()

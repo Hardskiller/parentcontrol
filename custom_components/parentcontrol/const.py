@@ -25,6 +25,7 @@ CONF_DEVICE_PROFILES = "device_profiles"
 CONF_PROFILE_ALLOWED = "profile_allowed_channels"
 CONF_PROFILE_BLOCKED = "profile_blocked_channels"
 CONF_PROFILE_WORDS = "profile_allowed_words"
+CONF_WARN_MINUTES = "warn_minutes"
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 MAX_AGE = 18
@@ -42,6 +43,12 @@ SHORT_MAX_SECONDS = 180
 # Cast reports the title up to two minutes late.
 NO_DATA_GRACE_SECONDS = 150
 HEALTH_INTERVAL_SECONDS = 300
+WARN_MINUTES = 5
+MAX_LIMIT_MINUTES = 600
+MAX_BONUS_MINUTES = 240
+WEEK_DAYS = 7
+TRANSCRIPT_SIZE = 20000
+TRANSCRIPT_COUNT = 50
 REPAIR_AFTER_SECONDS = 600
 
 STATUS_BLOCKED = "blockiert"
@@ -75,6 +82,16 @@ SETTING_SKIP_CHECKS = "skip_checks"
 SETTING_BLOCK_SHORTS = "block_shorts"
 SETTING_INHERIT_CHANNELS = "inherit_channels"
 SETTING_INHERIT_WORDS = "inherit_words"
+# Minutes of YouTube per day, 0 means no limit.
+LIMIT_WEEKDAY = "limit_weekday"
+LIMIT_WEEKEND = "limit_weekend"
+LIMITS = [LIMIT_WEEKDAY, LIMIT_WEEKEND]
+# Viewing hours as "HH:MM"; the same start and end means all day.
+WINDOW_WEEKDAY_START = "window_weekday_start"
+WINDOW_WEEKDAY_END = "window_weekday_end"
+WINDOW_WEEKEND_START = "window_weekend_start"
+WINDOW_WEEKEND_END = "window_weekend_end"
+WINDOWS = [WINDOW_WEEKDAY_START, WINDOW_WEEKDAY_END, WINDOW_WEEKEND_START, WINDOW_WEEKEND_END]
 DEVICE_SETTINGS = [SETTING_SEEK_TO_START]
 # Rules of a child; on a shared device the strictest value wins.
 RULES = [
@@ -105,6 +122,8 @@ BLOCK_UNCHECKED = "nicht_geprueft"
 BLOCK_CHANNEL = "kanal_gesperrt"
 BLOCK_SHORT = "short"
 BLOCK_NO_DATA = "keine_daten"
+BLOCK_LIMIT = "zeitlimit"
+BLOCK_WINDOW = "schauzeit"
 
 LIST_ALLOWED = "freigegeben"
 LIST_BLOCKED = "gesperrt"
@@ -120,9 +139,15 @@ SERVICE_BLOCK_CHANNEL = "block_channel"
 SERVICE_REMOVE_CHANNEL = "remove_channel"
 SERVICE_ALLOW_WORD = "allow_word"
 SERVICE_REMOVE_WORD = "remove_word"
+SERVICE_ADD_TIME = "add_time"
+SERVICE_ALLOW_VIDEO = "allow_video"
+SERVICE_REMOVE_VIDEO = "remove_video"
+SERVICE_GET_TRANSCRIPT = "get_transcript"
 
 EVENT_PAUSED = f"{DOMAIN}_paused"
 EVENT_PIN_FAILED = f"{DOMAIN}_pin_failed"
+EVENT_LIMIT_WARNING = f"{DOMAIN}_limit_warning"
+EVENT_LIMIT_REACHED = f"{DOMAIN}_limit_reached"
 
 HEALTH_OLLAMA = "ollama"
 HEALTH_YTDLP = "yt_dlp"

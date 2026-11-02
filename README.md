@@ -11,18 +11,20 @@ Home Assistant integration that estimates a minimum age for running YouTube vide
 - Several children per device; on a shared device the strictest rule applies
 - "Who is watching?" per device, including "Unrestricted" for adults
 - Rules per child: educational videos only, block swear words, strict rating, block Shorts
+- Daily YouTube limit and viewing hours per child, separately for weekdays and weekends, with a warning before and extra time for today
+- Allowed videos and the transcript of blocked videos, to decide from a notification
 - PIN lock: without the PIN, users without admin rights cannot weaken the protection
 - Dashboard card with device list, PIN pad, profiles, channel lists, and history
 - Allowed and blocked channels and allowed swear words, globally and per child
 - Editable prompts for the age rating and the educational rating
-- Watch time per device and per child, the latest videos per device (20 by default, adjustable), and daily video statistics
+- Watch time per device and per child, the last seven days per child, the latest videos per device (20 by default, adjustable), and daily video statistics
 - Warnings when Ollama or the YouTube lookup stop working
-- Blueprints for notifications
+- Blueprints for notifications with buttons, announcements, the time limit, and a daily report
 - Runs on any Home Assistant installation that supports HACS
 
 ## Requirements
 
-- Home Assistant with [HACS](https://www.hacs.xyz)
+- Home Assistant 2026.8 or newer with [HACS](https://www.hacs.xyz)
 - A reachable [Ollama](https://ollama.com) server with at least one model
 - Media players that report app, title, and state, see [Supported devices](#supported-devices)
 
@@ -48,7 +50,14 @@ You add, rename, and remove children in the integration options, and assign them
 - **Block Shorts:** pauses every YouTube Short, also from allowed channels. On by default.
 - **Allowed channels skip all checks:** when on, an allowed channel plays without any check. When off, it is still checked for age and swear words, but missing subtitles and missing educational value don't block it.
 - **Inherit global allowed channels** and **Inherit global words:** whether the global lists apply to this child as well. On by default.
-- **Watch time today:** minutes in which a player with this child is playing.
+- **Watch time today:** minutes in which a player with this child is playing, in any app.
+- **YouTube limit Mon–Fri** and **YouTube limit Sat–Sun:** minutes of YouTube per day, 0 means no limit. Raising or removing a limit needs the PIN.
+- **Viewing time Mon–Fri from/until** and **Sat–Sun from/until:** when the child may watch YouTube. The same start and end means all day, which is the default. Widening the window needs the PIN.
+- **Remaining time today:** YouTube minutes left, unknown without a limit.
+
+Only YouTube counts for the limit. On a shared device with "Automatic" the time counts for every assigned child, and YouTube pauses as soon as one of them reaches its limit or leaves its viewing time. Limit and viewing time also apply to allowed channels and allowed videos, but not to "Unrestricted". A few minutes before, ParentControl fires `parentcontrol_limit_warning`, and when reached it pauses and fires `parentcontrol_limit_reached`, each once per day and child. The warning time is set in the integration options, 5 minutes by default.
+
+**Extra time:** the card offers "+15 min" and "+30 min" per child, and the action `parentcontrol.add_time` takes any number of minutes. It needs the PIN, applies only today, and ends at midnight.
 
 If several children are assigned to one player, the strictest rule applies: the youngest age, every blocking switch that any child has on, and "skip all checks" only if every child has it on. A channel or word is allowed only if every child may have it.
 
@@ -68,9 +77,10 @@ These apply to all devices:
 
 - **Check:** switch that turns the check off for all devices.
 - **Videos, Approved, Educational, and Skipped today:** count each video once per day. The `gesamt` attribute holds the count since installation.
-- **Integration options:** model, device selection, PIN, stored videos per device (5 to 100, 20 by default), children and their assignment, lists, and the editable prompts. After a prompt change, videos are checked again. Only admins can open them.
+- **Integration options:** model, device selection, PIN, stored videos per device (5 to 100, 20 by default), warning time, children and their assignment, lists, and the editable prompts. After a prompt change, videos are checked again. Only admins can open them.
 - **Settings:** lock that guards the settings, see [PIN lock](#pin-lock).
 - **Ollama and YouTube lookup:** show whether both services work. After 10 minutes of failure, Home Assistant shows a warning under **Settings → Repairs**.
+- **Daily report:** the number of blocked videos today; the attributes hold YouTube time, limit, extra time, videos, and blocks per child, and the blocked videos with the kind of block.
 
 Each monitored player appears as its own device under ParentControl, with these entities:
 
@@ -80,7 +90,13 @@ Each monitored player appears as its own device under ParentControl, with these 
 - **Watch time today:** counts the minutes the device is playing, in any app.
 - **Latest videos:** the newest title as state, the latest videos in the `videos` attribute with time, channel, decision, reasons, active children, and markers for educational value, swear words, and Shorts. Every blocked video has a `sperrtext` that names the trigger. For swear words it lists the words found, in `schimpfwoerter_liste` as well.
 
-If a video fails the check, it is paused. The integration checks this every 3 seconds while the video keeps playing and fires the `parentcontrol_paused` event with `block_reason`, `block_text`, `swear_words`, and `profiles`. The logbook shows the same text.
+If a video fails the check, it is paused. The integration checks this every 3 seconds while the video keeps playing and fires the `parentcontrol_paused` event with `block_reason`, `block_text`, `swear_words`, `profiles`, `profile_ids`, `video_id`, and `url`. The logbook shows the same text.
+
+## Allowed videos and transcripts
+
+A blocked video can be allowed for the children who were watching: with the button in the notification, or with the action `parentcontrol.allow_video` and the `player`. It plays on right away and from then on stays allowed for these children. Shorts, limit, and viewing time still apply, and a blocked channel still wins. The card lists the allowed videos per child; removing one needs no PIN.
+
+ParentControl keeps the transcript of the last 50 blocked videos, up to 20,000 characters each. It comes from the subtitles YouTube provides; music videos often have none. In the card, an expanded history entry offers **Show transcript** and a link to the video on YouTube. The transcript can contain swear words in plain text, so it needs the PIN, also through the action `parentcontrol.get_transcript`.
 
 ## PIN lock
 
@@ -104,7 +120,7 @@ Without the PIN, the card shows the device list: status, age, watch time, the ru
 
 - **Device:** the current video, **Who is watching?**, **Jump to start**, and its latest videos
 - **History:** the latest videos of all devices. Every blocked entry shows the kind of block in red; tap an entry to see the full block text with the swear words found and the model's rating. The buttons to allow or block a channel ask whether it applies to all children or only to the children who were watching. **Show more** loads further entries.
-- **Profiles:** per child the age, all rules, the inherit switches, watch time, channel lists, and allowed words
+- **Profiles:** per child the age, YouTube today with limit and remaining time, the buttons "+15 min" and "+30 min", limits, viewing times, a chart of the last seven days with the limit, all rules, the inherit switches, channel lists, allowed words, and allowed videos
 - **General:** the check switch, the lists for all children, today's statistics, and the state of Ollama and the YouTube lookup
 
 When the lock closes again, the card returns to the device list. Admins see everything without a PIN.
@@ -146,6 +162,10 @@ These actions change the lists without opening the options. Without `profile` th
 | `parentcontrol.remove_channel` | removes a channel from the list in `list` (`allowed` or `blocked`) | for `blocked` |
 | `parentcontrol.allow_word` | allows a swear word | yes |
 | `parentcontrol.remove_word` | forbids a swear word again | no |
+| `parentcontrol.add_time` | gives a child extra minutes for today | yes |
+| `parentcontrol.allow_video` | allows the video running on `player` and plays it on | yes |
+| `parentcontrol.remove_video` | takes a video off the allowed videos | no |
+| `parentcontrol.get_transcript` | returns the transcript of a blocked video | yes |
 
 Without `channel`, the channel actions use the channel running on `player`, which makes a dashboard button easy:
 
@@ -165,7 +185,10 @@ Ready-made automations for notifications to the Home Assistant app:
 
 | Blueprint | Import |
 |---|---|
-| Notify on block: title, device, children, and the kind of block; tapping can open a dashboard | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Fnotify_on_block.yaml) |
+| Notify on block: title, device, children, and the kind of block, with buttons to allow the video, allow the channel for the children watching, or keep it blocked, and links to the video and to the dashboard | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Fnotify_on_block.yaml) |
+| Time limit: before the limit or the end of the viewing time, and when reached | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Ftime_limit.yaml) |
+| Announce on pause: tells the child on a speaker why YouTube stopped or how much time is left, without swear words. Use a speaker other than the TV, because an announcement through Cast on the TV closes YouTube. | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Fannounce.yaml) |
+| Daily report: YouTube time, limit, extra time, and videos per child, and the blocked videos, at a time you choose (20:00 by default) | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Fdaily_report.yaml) |
 | Wrong PIN, optionally from a certain attempt on | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Fwrong_pin.yaml) |
 | Service down: Ollama or the YouTube lookup failed for a set time, and back again | [![Import](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FHardskiller%2Fparentcontrol%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fparentcontrol%2Fservice_down.yaml) |
 

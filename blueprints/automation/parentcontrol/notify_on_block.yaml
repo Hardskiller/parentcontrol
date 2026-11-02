@@ -1,9 +1,10 @@
 blueprint:
   name: ParentControl – notify on block
   description: >-
-    Sends a push notification when ParentControl pauses a video. The message
-    names the device, the title and the kind of block; swear words are not
-    listed. Tapping the notification can open a dashboard.
+    Sends a push notification when ParentControl pauses a video, with buttons
+    to allow the video, allow the channel for the children watching, or keep
+    it blocked, and links to the video and to a dashboard with the transcript.
+    Swear words are not listed in the notification.
   domain: automation
   source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/notify_on_block.yaml
   input:
@@ -15,12 +16,18 @@ blueprint:
           integration: mobile_app
     dashboard:
       name: Dashboard path
-      description: Opened when the notification is tapped, for example /lovelace/kids. Empty opens the app.
+      description: Dashboard with the ParentControl card, for example /lovelace/kids. Empty opens the app.
       default: ""
       selector:
         text:
+    with_buttons:
+      name: Buttons
+      description: Offer to allow the video or the channel right from the notification.
+      default: true
+      selector:
+        boolean:
 
-mode: queued
+mode: parallel
 
 trigger:
   - trigger: event
@@ -28,6 +35,7 @@ trigger:
 
 variables:
   dashboard: !input dashboard
+  with_buttons: !input with_buttons
   reasons:
     alter: zu jung
     paedagogik: nicht pädagogisch wertvoll
@@ -37,9 +45,32 @@ variables:
     kanal_gesperrt: Kanal gesperrt
     short: Short
     keine_daten: kein Titel gemeldet
+    zeitlimit: Zeitlimit erreicht
+    schauzeit: außerhalb der Schauzeit
   reason: "{{ reasons.get(trigger.event.data.block_reason, trigger.event.data.block_reason) }}"
   device: "{{ state_attr(trigger.event.data.entity_id, 'friendly_name') or trigger.event.data.entity_id }}"
   profiles: "{{ trigger.event.data.profiles | default([]) | join(', ') }}"
+  # Time limits are not about the video, so there is nothing to allow.
+  about_video: "{{ trigger.event.data.block_reason not in ['zeitlimit', 'schauzeit', 'keine_daten'] }}"
+  action_video: "PC_VIDEO_{{ context.id }}"
+  action_channel: "PC_CHANNEL_{{ context.id }}"
+  action_keep: "PC_KEEP_{{ context.id }}"
+  link: "{{ dashboard if dashboard else '/' }}"
+  actions: >-
+    {% set ns = namespace(items=[]) %}
+    {% if with_buttons and about_video %}
+      {% set ns.items = ns.items + [
+        {'action': action_video, 'title': 'Video erlauben'},
+        {'action': action_channel, 'title': 'Kanal freigeben'},
+        {'action': action_keep, 'title': 'Gesperrt lassen'}] %}
+    {% endif %}
+    {% if trigger.event.data.url %}
+      {% set ns.items = ns.items + [{'action': 'URI', 'title': 'Video ansehen', 'uri': trigger.event.data.url}] %}
+    {% endif %}
+    {% if about_video %}
+      {% set ns.items = ns.items + [{'action': 'URI', 'title': 'Transkript', 'uri': link}] %}
+    {% endif %}
+    {{ ns.items }}
 
 action:
   - domain: mobile_app
@@ -50,5 +81,38 @@ action:
       „{{ trigger.event.data.title }}“ auf {{ device }}{{ ' (' ~ profiles ~ ')' if profiles else '' }}
       wurde pausiert.
     data:
-      url: "{{ dashboard if dashboard else '/' }}"
-      clickAction: "{{ dashboard if dashboard else '/' }}"
+      url: "{{ link }}"
+      clickAction: "{{ link }}"
+      actions: "{{ actions }}"
+  - condition: template
+    value_template: "{{ with_buttons and about_video }}"
+  - wait_for_trigger:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "{{ action_video }}"
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "{{ action_channel }}"
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: "{{ action_keep }}"
+    timeout: "01:00:00"
+    continue_on_timeout: false
+  - choose:
+      - conditions: "{{ wait.trigger.event.data.action == action_video }}"
+        sequence:
+          - action: parentcontrol.allow_video
+            data:
+              player: "{{ trigger.event.data.entity_id }}"
+      - conditions: "{{ wait.trigger.event.data.action == action_channel and trigger.event.data.channel }}"
+        sequence:
+          - repeat:
+              for_each: "{{ trigger.event.data.profile_ids | default([]) }}"
+              sequence:
+                - action: parentcontrol.allow_channel
+                  data:
+                    channel: "{{ trigger.event.data.channel }}"
+                    profile: "{{ repeat.item }}"

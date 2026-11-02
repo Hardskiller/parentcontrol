@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
@@ -33,12 +34,14 @@ from . import engine
 from .const import (
     BLOCK_AGE,
     BLOCK_CHANNEL,
+    BLOCK_LIMIT,
     BLOCK_NO_DATA,
     BLOCK_NO_SUBTITLES,
     BLOCK_PEDAGOGY,
     BLOCK_PROFANITY,
     BLOCK_SHORT,
     BLOCK_UNCHECKED,
+    BLOCK_WINDOW,
     CONF_AGE,
     CONF_AGE_PROMPT,
     CONF_ALLOWED,
@@ -55,13 +58,18 @@ from .const import (
     CONF_PROFILE_BLOCKED,
     CONF_PROFILE_WORDS,
     CONF_PROFILES,
+    CONF_WARN_MINUTES,
     DOMAIN,
+    EVENT_LIMIT_REACHED,
+    EVENT_LIMIT_WARNING,
     EVENT_PAUSED,
     HEALTH,
     HEALTH_INTERVAL_SECONDS,
     HEALTH_OLLAMA,
     HEALTH_YTDLP,
     HISTORY_SIZE,
+    LIMIT_WEEKDAY,
+    LIMIT_WEEKEND,
     LIST_ALLOWED,
     LIST_BLOCKED,
     LOOSENING_VALUES,
@@ -92,9 +100,17 @@ from .const import (
     STATUS_UNCHECKED,
     STATUS_UNRESTRICTED,
     STORAGE_VERSION,
+    TRANSCRIPT_COUNT,
+    TRANSCRIPT_SIZE,
+    WARN_MINUTES,
+    WEEK_DAYS,
+    WINDOW_WEEKDAY_END,
+    WINDOW_WEEKDAY_START,
+    WINDOW_WEEKEND_END,
+    WINDOW_WEEKEND_START,
 )
 from .pinlock import PinLock
-from .profiles import Rules, profile_rules
+from .profiles import Rules, minutes_to_end, in_window, profile_rules
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -106,6 +122,7 @@ ENFORCE_INTERVAL = timedelta(seconds=3)
 MAX_TICK_SECONDS = 30
 HEALTH_TIMEOUT = 10
 LIST_WORDS = "words"
+TRANSCRIPT_BUFFER = 30
 
 
 @dataclass(frozen=True)
@@ -122,6 +139,7 @@ class PlayerStatus:
     short: bool = False
     block_text: str | None = None
     profiles: tuple[str, ...] = ()
+    video_id: str | None = None
 
 
 def block_text(reason: str | None, age: int | None, rating: engine.Rating | None) -> str | None:
@@ -147,7 +165,15 @@ BLOCK_TEXTS = {
     BLOCK_NO_SUBTITLES: "Strenge Bewertung: Ohne Untertitel ist keine sichere Einstufung möglich.",
     BLOCK_UNCHECKED: "Strenge Bewertung: Die Prüfung ist fehlgeschlagen.",
     BLOCK_NO_DATA: "Strenge Bewertung: Das Gerät meldet keinen Videotitel.",
+    BLOCK_LIMIT: "Das Zeitlimit für heute ist erreicht.",
+    BLOCK_WINDOW: "Außerhalb der Schauzeit.",
 }
+
+
+def is_youtube(attributes: dict) -> bool:
+    """Recognize YouTube by app name, app id or source."""
+    app = " ".join(str(attributes.get(name) or "") for name in APP_ATTRIBUTES)
+    return "youtube" in app.lower()
 
 
 def filter_words(rating: dict, rules: Rules) -> dict:
@@ -171,6 +197,7 @@ class Monitor:
         self.profiles: dict[str, dict] = options[CONF_PROFILES]
         self.device_profiles: dict[str, list[str]] = options[CONF_DEVICE_PROFILES]
         self.signal = f"{DOMAIN}_{entry.entry_id}"
+        self.device_id: str | None = None
         self.enabled = True
         self._device_settings: dict[str, dict[str, bool]] = {}
         self._profile_settings: dict[str, dict] = {}
@@ -197,6 +224,20 @@ class Monitor:
         self._totals = dict.fromkeys(STATS, 0)
         self._watch_seconds: dict[str, float] = {}
         self._profile_seconds: dict[str, float] = {}
+        self._youtube_seconds: dict[str, float] = {}
+        self._bonus: dict[str, int] = {}
+        self._profile_videos: dict[str, int] = {}
+        # Warnings and limit events fire once per child, kind and day.
+        self._notified: list[str] = []
+        self._week: dict[str, dict[str, dict]] = {}
+        self._allowed_videos: dict[str, list[dict]] = {}
+        self._video_ids: dict[str, str] = {}
+        self._recent_transcripts: OrderedDict[str, str] = OrderedDict()
+        self._transcripts: OrderedDict[str, str] = OrderedDict()
+        self._transcript_store: Store = Store(
+            hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.transcripts"
+        )
+        self._warn_minutes = int(options.get(CONF_WARN_MINUTES, WARN_MINUTES))
         self._last_tick = time.monotonic()
         self._shorts: dict[str, bool] = {}
         self._history: dict[str, list[dict]] = {}
@@ -220,6 +261,10 @@ class Monitor:
         self._events = data.get("events", [])
         self._totals |= data.get("totals", {})
         self._shorts = data.get("shorts", {})
+        self._week = data.get("week", {})
+        self._allowed_videos = data.get("allowed_videos", {})
+        self._video_ids = data.get("video_ids", {})
+        self._transcripts = OrderedDict(await self._transcript_store.async_load() or {})
         # A smaller size in the options also shortens the stored lists.
         self._history = {
             player: videos[: self._history_size]
@@ -230,6 +275,10 @@ class Monitor:
             self._today |= data.get("today", {})
             self._watch_seconds = data.get("watch_seconds", {})
             self._profile_seconds = data.get("profile_seconds", {})
+            self._youtube_seconds = data.get("youtube_seconds", {})
+            self._bonus = data.get("bonus", {})
+            self._profile_videos = data.get("profile_videos", {})
+            self._notified = data.get("notified", [])
 
     @callback
     def async_start(self) -> None:
@@ -290,6 +339,169 @@ class Monitor:
         self._profile_settings.setdefault(profile, {})[setting] = value
         self._save()
         self.async_evaluate_all()
+
+    def profile_value(self, profile: str, key: str, default):
+        """Return a limit or a viewing time of a child."""
+        return self._profile_settings.get(profile, {}).get(key, default)
+
+    @callback
+    def async_set_profile_value(self, profile: str, key: str, value) -> None:
+        """Change a limit or a viewing time of a child."""
+        self._profile_settings.setdefault(profile, {})[key] = value
+        self._save()
+        self.async_evaluate_all()
+
+    @staticmethod
+    def _weekend() -> bool:
+        return dt_util.now().weekday() >= 5
+
+    def limit_key(self) -> str:
+        """Return the limit that applies today."""
+        return LIMIT_WEEKEND if self._weekend() else LIMIT_WEEKDAY
+
+    def window_keys(self) -> tuple[str, str]:
+        """Return the viewing time keys that apply today."""
+        if self._weekend():
+            return WINDOW_WEEKEND_START, WINDOW_WEEKEND_END
+        return WINDOW_WEEKDAY_START, WINDOW_WEEKDAY_END
+
+    def window(self, profile: str) -> tuple[str, str]:
+        """Return today's viewing window of a child."""
+        start, end = self.window_keys()
+        return self.profile_value(profile, start, "00:00"), self.profile_value(profile, end, "00:00")
+
+    def limit_today(self, profile: str) -> int:
+        """Return today's limit in minutes, 0 for none."""
+        return int(self.profile_value(profile, self.limit_key(), 0))
+
+    def youtube_minutes(self, profile: str) -> int:
+        """Return today's YouTube minutes of a child."""
+        return int(self._youtube_seconds.get(profile, 0) // 60)
+
+    def bonus_minutes(self, profile: str) -> int:
+        """Return today's extra minutes of a child."""
+        return self._bonus.get(profile, 0)
+
+    def remaining_minutes(self, profile: str) -> int | None:
+        """Return the minutes left today, None without a limit."""
+        limit = self.limit_today(profile)
+        if not limit:
+            return None
+        used = self._youtube_seconds.get(profile, 0) / 60
+        return max(0, int(limit + self.bonus_minutes(profile) - used))
+
+    def in_viewing_time(self, profile: str) -> bool:
+        """Return whether a child may watch now."""
+        now = dt_util.now()
+        return in_window(*self.window(profile), now.hour * 60 + now.minute)
+
+    @callback
+    def async_add_time(self, profile: str, minutes: int) -> None:
+        """Give a child extra minutes for today."""
+        self._bonus[profile] = self.bonus_minutes(profile) + minutes
+        self._notified = [key for key in self._notified if not key.startswith(f"{profile}|")]
+        self._save()
+        self.async_evaluate_all()
+        async_dispatcher_send(self.hass, self.signal)
+
+    def week(self, profile: str) -> list[dict]:
+        """Return the last seven days of a child, oldest first."""
+        days = self._week.get(profile, {})
+        return [{"datum": day, **days[day]} for day in sorted(days)[-WEEK_DAYS:]]
+
+    def profile_videos_today(self, profile: str) -> int:
+        """Return how many videos a child watched today."""
+        return self._profile_videos.get(profile, 0)
+
+    def allowed_videos(self, profile: str) -> list[dict]:
+        """Return the videos allowed for a child."""
+        return self._allowed_videos.get(profile, [])
+
+    def _video_allowed(self, rules: Rules, video_key: str) -> bool:
+        return all(
+            any(video["schluessel"] == video_key for video in self.allowed_videos(profile))
+            for profile in rules.profiles
+        )
+
+    @callback
+    def async_allow_video(self, player: str, profiles: list[str]) -> None:
+        """Allow the video running on a player for the given children and play it."""
+        status = self.status(player)
+        if not status.title:
+            raise HomeAssistantError("Auf dem Gerät läuft kein Video")
+        video_key = f"{status.title}\n{status.channel or ''}"
+        video = {
+            "schluessel": video_key,
+            "titel": status.title,
+            "kanal": status.channel,
+            "video_id": status.video_id,
+        }
+        for profile in profiles:
+            videos = [v for v in self.allowed_videos(profile) if v["schluessel"] != video_key]
+            self._allowed_videos[profile] = [*videos, video]
+        self._save()
+        self._evaluate(player)
+        async_dispatcher_send(self.hass, self.signal)
+        self.hass.async_create_task(self._async_play(player))
+
+    @callback
+    def async_remove_video(self, video_key: str, profile: str | None) -> None:
+        """Take a video off the allowed list of one or every child."""
+        for pid in [profile] if profile else list(self._allowed_videos):
+            self._allowed_videos[pid] = [
+                v for v in self.allowed_videos(pid) if v["schluessel"] != video_key
+            ]
+        self._save()
+        self.async_evaluate_all()
+        async_dispatcher_send(self.hass, self.signal)
+
+    def transcript(self, video_key: str) -> str | None:
+        """Return the stored transcript of a blocked video."""
+        return self._transcripts.get(video_key)
+
+    @callback
+    def _keep_transcript(self, video_key: str) -> None:
+        """Keep the transcript of a blocked video, the last few only."""
+        text = self._recent_transcripts.get(video_key)
+        if not text or video_key in self._transcripts:
+            return
+        self._transcripts[video_key] = text
+        while len(self._transcripts) > TRANSCRIPT_COUNT:
+            self._transcripts.popitem(last=False)
+        self._transcript_store.async_delay_save(lambda: dict(self._transcripts), SAVE_DELAY_SECONDS)
+
+    def daily_report(self) -> dict:
+        """Collect today's numbers per child and the blocked videos."""
+        today = self._day
+        children = [
+            {
+                "name": self.profile_name(pid),
+                "youtube_minuten": self.youtube_minutes(pid),
+                "limit": self.limit_today(pid),
+                "bonus": self.bonus_minutes(pid),
+                "videos": self.profile_videos_today(pid),
+                "gesperrt": self._week.get(pid, {}).get(today, {}).get("gesperrt", 0),
+            }
+            for pid in self.profiles
+        ]
+        blocked = [
+            {
+                "zeit": video["zeit"][11:16],
+                "geraet": self._player_name(player),
+                "kinder": video.get("profil_namen", []),
+                "titel": video["titel"],
+                "art": video["sperrgrund"],
+            }
+            for player, videos in self._history.items()
+            for video in videos
+            if video["status"] == STATUS_BLOCKED and video["zeit"][:10] == today
+        ]
+        blocked.sort(key=lambda video: video["zeit"])
+        return {"datum": today, "kinder": children, "gesperrte_videos": blocked}
+
+    def _player_name(self, player: str) -> str:
+        state = self.hass.states.get(player)
+        return state.name if state else player
 
     def profile_name(self, profile: str) -> str:
         """Return the name of a profile."""
@@ -550,6 +762,15 @@ class Monitor:
         self._today = dict.fromkeys(STATS, 0)
         self._watch_seconds = {}
         self._profile_seconds = {}
+        self._youtube_seconds = {}
+        self._bonus = {}
+        self._profile_videos = {}
+        self._notified = []
+        cutoff = sorted({day for days in self._week.values() for day in days})[-WEEK_DAYS + 1 :]
+        self._week = {
+            pid: {day: data for day, data in days.items() if day in cutoff}
+            for pid, days in self._week.items()
+        }
         # A choice of who is watching lasts one day at most.
         self._selection = {}
         self._save()
@@ -568,21 +789,40 @@ class Monitor:
             before = self.watch_minutes(player)
             self._watch_seconds[player] = self._watch_seconds.get(player, 0) + elapsed
             changed |= self.watch_minutes(player) != before
+            youtube = is_youtube(state.attributes)
             # On a shared device the time counts for every child that may watch.
             for profile in self.active_profiles(player):
                 before = self.profile_watch_minutes(profile)
                 self._profile_seconds[profile] = self._profile_seconds.get(profile, 0) + elapsed
                 changed |= self.profile_watch_minutes(profile) != before
+                if not youtube:
+                    continue
+                before = self.youtube_minutes(profile)
+                self._youtube_seconds[profile] = self._youtube_seconds.get(profile, 0) + elapsed
+                if self.youtube_minutes(profile) != before:
+                    changed = True
+                    self._week_entry(profile)["minuten"] = self.youtube_minutes(profile)
         if changed:
             self._save()
             async_dispatcher_send(self.hass, self.signal)
 
+    def _week_entry(self, profile: str) -> dict:
+        entry = self._week.setdefault(profile, {}).setdefault(
+            self._day, {"minuten": 0, "limit": 0, "gesperrt": 0}
+        )
+        entry["limit"] = self.limit_today(profile)
+        return entry
+
     @callback
-    def _count_video(self, key: str, blocked: bool, valuable: bool) -> None:
+    def _count_video(self, key: str, blocked: bool, valuable: bool, player: str) -> None:
         """Count each video once per day, with the result it first had."""
         if key in self._seen:
             return
         self._seen.append(key)
+        for profile in self.active_profiles(player):
+            self._profile_videos[profile] = self.profile_videos_today(profile) + 1
+            if blocked:
+                self._week_entry(profile)["gesperrt"] += 1
         counted = [STAT_VIDEOS, STAT_SKIPPED if blocked else STAT_APPROVED]
         if valuable:
             counted.append(STAT_VALUABLE)
@@ -615,6 +855,13 @@ class Monitor:
             "totals": self._totals,
             "watch_seconds": self._watch_seconds,
             "profile_seconds": self._profile_seconds,
+            "youtube_seconds": self._youtube_seconds,
+            "bonus": self._bonus,
+            "profile_videos": self._profile_videos,
+            "notified": self._notified,
+            "week": self._week,
+            "allowed_videos": self._allowed_videos,
+            "video_ids": self._video_ids,
             "shorts": self._shorts,
             "history": self._history,
         }
@@ -640,11 +887,16 @@ class Monitor:
 
     @callback
     def _publish(self, player: str, status: PlayerStatus) -> None:
+        video_key = f"{status.title}\n{status.channel or ''}" if status.title else None
         status = replace(
             status,
             block_text=block_text(status.block_reason, status.age, status.rating),
             profiles=tuple(self.active_profiles(player)),
+            video_id=(status.rating.video_id if status.rating else None)
+            or (self._video_ids.get(video_key) if video_key else None),
         )
+        if status.status == STATUS_BLOCKED and video_key:
+            self._keep_transcript(video_key)
         if self._statuses.get(player) != status:
             self._statuses[player] = status
             self._record(player, status)
@@ -672,6 +924,8 @@ class Monitor:
             "short": status.short,
             "profile": list(status.profiles),
             "profil_namen": [self.profile_name(pid) for pid in status.profiles],
+            "video_id": status.video_id,
+            "schluessel": f"{status.title}\n{status.channel or ''}",
         }
         if history and (history[0]["titel"], history[0]["kanal"]) == (status.title, status.channel):
             history[0] = {**entry, "zeit": history[0]["zeit"]}
@@ -714,6 +968,11 @@ class Monitor:
             self._failed[video_key] = time.monotonic()
         elif meta.video_id:
             self._shorts[video_key] = meta.short
+            self._video_ids[video_key] = meta.video_id
+            if meta.transcript:
+                self._recent_transcripts[video_key] = meta.transcript[:TRANSCRIPT_SIZE]
+                while len(self._recent_transcripts) > TRANSCRIPT_BUFFER:
+                    self._recent_transcripts.popitem(last=False)
             self._save()
         self.async_evaluate_all()
         return meta
@@ -752,6 +1011,15 @@ class Monitor:
             self._pending.discard(key)
         self.async_evaluate_all()
 
+    async def _async_play(self, player: str) -> None:
+        """Play the allowed video on; not every player can resume."""
+        try:
+            await self.hass.services.async_call(
+                "media_player", "media_play", {"entity_id": player}, blocking=True
+            )
+        except HomeAssistantError as err:
+            _LOGGER.debug("Fortsetzen auf %s fehlgeschlagen: %s", player, err)
+
     async def _async_stop_video(self, player: str) -> None:
         """Pause and optionally go back to the start; not every player can seek."""
         calls = [("media_pause", {})]
@@ -783,6 +1051,9 @@ class Monitor:
         text = block_text(reason, age, engine.Rating(**rating) if rating else None)
         self._log_event("pausiert", video, rating, text)
         profiles = self.active_profiles(player)
+        video_id = (rating or {}).get("video_id") or self._video_ids.get(
+            f"{video.title}\n{video.channel}"
+        )
         self.hass.bus.async_fire(
             EVENT_PAUSED,
             {
@@ -794,6 +1065,9 @@ class Monitor:
                 "block_text": text,
                 "swear_words": rating.get("profanity_words", []) if rating else [],
                 "profiles": [self.profile_name(pid) for pid in profiles],
+                "profile_ids": profiles,
+                "video_id": video_id,
+                "url": f"https://www.youtube.com/watch?v={video_id}" if video_id else None,
             },
         )
         _LOGGER.info("Pausiert auf %s: %r (%s)", player, video.title, text)
@@ -813,6 +1087,46 @@ class Monitor:
                 )
                 return
         self._publish(player, PlayerStatus(STATUS_NO_DATA, age=age))
+
+    def _time_block(self, rules: Rules) -> tuple[str, str] | None:
+        """Return the reason and the child when viewing time or limit is over."""
+        for profile in rules.profiles:
+            if not self.in_viewing_time(profile):
+                return BLOCK_WINDOW, profile
+            if self.remaining_minutes(profile) == 0:
+                return BLOCK_LIMIT, profile
+        return None
+
+    @callback
+    def _notify_once(self, event: str, profile: str, kind: str, player: str, minutes: int | None) -> None:
+        key = f"{profile}|{event}|{kind}"
+        if key in self._notified:
+            return
+        self._notified.append(key)
+        self._save()
+        self.hass.bus.async_fire(
+            event,
+            {
+                "entity_id": player,
+                "profile": self.profile_name(profile),
+                "profile_id": profile,
+                "reason": kind,
+                "minutes": minutes,
+            },
+        )
+
+    @callback
+    def _check_warnings(self, player: str, rules: Rules) -> None:
+        """Warn once per day shortly before the limit or the end of the viewing time."""
+        now = dt_util.now()
+        minute = now.hour * 60 + now.minute
+        for profile in rules.profiles:
+            remaining = self.remaining_minutes(profile)
+            if remaining is not None and 0 < remaining <= self._warn_minutes:
+                self._notify_once(EVENT_LIMIT_WARNING, profile, BLOCK_LIMIT, player, remaining)
+            to_end = minutes_to_end(*self.window(profile), minute)
+            if to_end is not None and 0 < to_end <= self._warn_minutes:
+                self._notify_once(EVENT_LIMIT_WARNING, profile, BLOCK_WINDOW, player, to_end)
 
     @staticmethod
     def _block_reason(rules: Rules, rating: dict, listed: bool) -> str | None:
@@ -838,8 +1152,7 @@ class Monitor:
             self._publish(player, PlayerStatus())
             return
         attributes = state.attributes
-        app = " ".join(str(attributes.get(name) or "") for name in APP_ATTRIBUTES)
-        if "youtube" not in app.lower():
+        if not is_youtube(attributes):
             self._no_data_since.pop(player, None)
             self._publish(player, PlayerStatus())
             return
@@ -851,6 +1164,19 @@ class Monitor:
             self._no_data_since.pop(player, None)
             self._publish(player, PlayerStatus(STATUS_UNRESTRICTED, title, channel or None))
             return
+        if self.enabled and (time_block := self._time_block(rules)):
+            # Viewing time and limit apply to every channel and even without a title.
+            reason, profile = time_block
+            if state.state == STATE_PLAYING:
+                self._pause(player, engine.Video(title or "YouTube", channel), None, reason, rules.age)
+                self._notify_once(EVENT_LIMIT_REACHED, profile, reason, player, 0)
+            self._publish(
+                player,
+                PlayerStatus(STATUS_BLOCKED, title, channel or None, rules.age, block_reason=reason),
+            )
+            return
+        if self.enabled and state.state == STATE_PLAYING:
+            self._check_warnings(player, rules)
         if not title:
             self._handle_no_data(player, state.state == STATE_PLAYING, rules)
             return
@@ -865,7 +1191,7 @@ class Monitor:
         key = f"{video_key}\n{self._prompt_id}"
         normalized_channel = engine.normalize(channel)
         if rules.is_blocked(normalized_channel):
-            self._count_video(key, True, False)
+            self._count_video(key, True, False, player)
             if state.state == STATE_PLAYING:
                 self._pause(player, video, None, BLOCK_CHANNEL, age)
             self._publish(
@@ -885,7 +1211,7 @@ class Monitor:
         # Shorts last three minutes at most and are blocked on every channel.
         maybe_short = rules.block_shorts and not (duration and duration > SHORT_MAX_SECONDS)
         if maybe_short and self._shorts.get(video_key):
-            self._count_video(key, True, False)
+            self._count_video(key, True, False, player)
             if state.state == STATE_PLAYING:
                 self._pause(player, video, None, BLOCK_SHORT, age)
             self._publish(
@@ -901,6 +1227,20 @@ class Monitor:
                 ),
             )
             return
+        if self._video_allowed(rules, video_key):
+            self._count_video(key, False, False, player)
+            self._publish(
+                player,
+                PlayerStatus(
+                    STATUS_FREE,
+                    title,
+                    channel,
+                    age,
+                    engine.Rating(0, "Video ist freigegeben.", engine.SOURCE_ALLOWLIST),
+                    list_state=list_state,
+                ),
+            )
+            return
         skip = listed and rules.skip_checks
         if maybe_short:
             if skip or key in self._ratings:
@@ -913,7 +1253,7 @@ class Monitor:
                 self._evaluate(player)
                 return
         if skip:
-            self._count_video(key, False, False)
+            self._count_video(key, False, False, player)
             self._publish(
                 player,
                 PlayerStatus(
@@ -939,7 +1279,7 @@ class Monitor:
             )
             return
         if rating is None:
-            self._count_video(key, True, False)
+            self._count_video(key, True, False, player)
             if state.state == STATE_PLAYING:
                 self._pause(player, video, None, BLOCK_UNCHECKED, age)
             self._publish(
@@ -949,7 +1289,7 @@ class Monitor:
             return
         rating = filter_words(rating, rules)
         block_reason = self._block_reason(rules, rating, listed)
-        self._count_video(key, block_reason is not None, rating.get("valuable", False))
+        self._count_video(key, block_reason is not None, rating.get("valuable", False), player)
         if block_reason and state.state == STATE_PLAYING:
             self._pause(player, video, rating, block_reason, age)
         self._publish(

@@ -43,6 +43,24 @@ const TEXTS = {
     noWords: "Die Wörter wurden erst ab Version 0.3.3 gespeichert.",
     who: "Wer schaut?",
     unrestrictedHint: "Unbeschränkt: keine Prüfung bis zum Ausschalten",
+    youtubeToday: "YouTube heute",
+    of: "von",
+    noLimit: "kein Limit",
+    left: "übrig",
+    bonus: "Bonus",
+    limitWeekday: "Limit Mo–Fr (min)",
+    limitWeekend: "Limit Sa–So (min)",
+    windowWeekday: "Schauzeit Mo–Fr",
+    windowWeekend: "Schauzeit Sa–So",
+    allDay: "gleiche Zeiten = ganztägig",
+    week: "Letzte 7 Tage",
+    weekSum: "Summe",
+    blockedCount: "gesperrt",
+    allowedVideos: "Erlaubte Videos",
+    transcript: "Transkript anzeigen",
+    noTranscript: "Für dieses Video ist kein Transkript gespeichert.",
+    watchVideo: "Auf YouTube ansehen",
+    outsideWindow: "außerhalb der Schauzeit",
     status: {
       frei: "Frei",
       blockiert: "Blockiert",
@@ -62,6 +80,8 @@ const TEXTS = {
       kanal_gesperrt: "Kanal gesperrt",
       short: "Short",
       keine_daten: "kein Titel gemeldet",
+      zeitlimit: "Zeitlimit erreicht",
+      schauzeit: "außerhalb der Schauzeit",
     },
     settings: {
       seek_to_start: "An den Anfang springen",
@@ -136,6 +156,24 @@ const TEXTS = {
     noWords: "Words are only stored since version 0.3.3.",
     who: "Who is watching?",
     unrestrictedHint: "Unrestricted: no check until the device turns off",
+    youtubeToday: "YouTube today",
+    of: "of",
+    noLimit: "no limit",
+    left: "left",
+    bonus: "Bonus",
+    limitWeekday: "Limit Mon–Fri (min)",
+    limitWeekend: "Limit Sat–Sun (min)",
+    windowWeekday: "Viewing time Mon–Fri",
+    windowWeekend: "Viewing time Sat–Sun",
+    allDay: "same times = all day",
+    week: "Last 7 days",
+    weekSum: "Total",
+    blockedCount: "blocked",
+    allowedVideos: "Allowed videos",
+    transcript: "Show transcript",
+    noTranscript: "No transcript is stored for this video.",
+    watchVideo: "Watch on YouTube",
+    outsideWindow: "outside viewing time",
     status: {
       frei: "Allowed",
       blockiert: "Blocked",
@@ -155,6 +193,8 @@ const TEXTS = {
       kanal_gesperrt: "channel blocked",
       short: "Short",
       keine_daten: "no title reported",
+      zeitlimit: "time limit reached",
+      schauzeit: "outside viewing time",
     },
     settings: {
       seek_to_start: "Jump to start",
@@ -242,6 +282,7 @@ class ParentControlCard extends HTMLElement {
     this._expanded = new Set();
     this._limit = 0;
     this._signature = "";
+    this._transcripts = {};
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
     this.shadowRoot.addEventListener("change", (event) => this._onChange(event));
     this.shadowRoot.addEventListener("input", (event) => {
@@ -329,6 +370,7 @@ class ParentControlCard extends HTMLElement {
       this._hass.user?.is_admin,
       [...this._expanded],
       this._limit,
+      Object.keys(this._transcripts),
     ]);
     if (signature === this._signature) return;
     const active = this.shadowRoot.activeElement;
@@ -418,6 +460,15 @@ class ParentControlCard extends HTMLElement {
       html += `<div class="sub wrap">${t.wordsLabel}: ${escape(words.join(", "))}</div>`;
     if (attributes.grund)
       html += `<div class="sub wrap">${t.reasonLabel}: ${escape(attributes.grund)}</div>`;
+    if (attributes.video_id)
+      html += `<a class="link" target="_blank" rel="noreferrer" href="https://www.youtube.com/watch?v=${encodeURIComponent(attributes.video_id)}">${t.watchVideo}</a> `;
+    if (reason && attributes.schluessel) {
+      const key = attributes.schluessel;
+      if (key in this._transcripts)
+        html += `<pre class="transcript">${escape(this._transcripts[key] || t.noTranscript)}</pre>`;
+      else
+        html += `<button class="link" data-action="transcript" data-key="${escape(key)}">${t.transcript}</button>`;
+    }
     return html;
   }
 
@@ -507,16 +558,17 @@ class ParentControlCard extends HTMLElement {
     </button>`;
   }
 
-  _stepper(entityId, label) {
+  _stepper(entityId, label, step = 1) {
     const state = this._state(entityId);
     if (!state) return "";
     const value = Number(state.state);
+    const max = Number(state.attributes.max ?? 18);
     return `<div class="stepper">
       <span>${escape(label)}</span>
       <div>
-        <button class="round" data-action="number" data-entity="${escape(entityId)}" data-value="${value - 1}"><ha-icon icon="mdi:minus"></ha-icon></button>
+        <button class="round" data-action="number" data-entity="${escape(entityId)}" data-value="${Math.max(0, value - step)}"><ha-icon icon="mdi:minus"></ha-icon></button>
         <span class="value">${escape(state.state)}</span>
-        <button class="round" data-action="number" data-entity="${escape(entityId)}" data-value="${value + 1}"><ha-icon icon="mdi:plus"></ha-icon></button>
+        <button class="round" data-action="number" data-entity="${escape(entityId)}" data-value="${Math.min(max, value + step)}"><ha-icon icon="mdi:plus"></ha-icon></button>
       </div>
     </div>`;
   }
@@ -646,6 +698,63 @@ class ParentControlCard extends HTMLElement {
       )}</div>`;
   }
 
+  _timeInput(entityId) {
+    const state = this._state(entityId);
+    if (!state) return "";
+    return `<input type="time" class="time" data-time-entity="${escape(entityId)}" value="${escape(state.state.slice(0, 5))}">`;
+  }
+
+  // Today's YouTube time, bonus, limits, viewing hours and the last seven days.
+  _timeBlock(profile) {
+    const t = this._t;
+    const a = profile.attributes;
+    const ids = a.entitaeten || {};
+    const limit = a.limit_heute ? `${t.of} ${a.limit_heute + (a.bonus_heute || 0)} min · ${a.restzeit} min ${t.left}` : `· ${t.noLimit}`;
+    const outside = a.im_zeitfenster === false ? ` · <span class="why">${t.outsideWindow}</span>` : "";
+    const days = a.woche || [];
+    const top = Math.max(30, ...days.map((day) => Math.max(day.minuten, day.limit || 0)));
+    const bars = days
+      .map((day, index) => {
+        const height = Math.round((day.minuten / top) * 60);
+        const line = day.limit ? 70 - Math.round((day.limit / top) * 60) : null;
+        const label = new Date(`${day.datum}T12:00:00`).toLocaleDateString(this._hass.locale?.language, { weekday: "short" });
+        return `<g transform="translate(${index * 40},0)">
+          <rect x="8" y="${70 - height}" width="24" height="${height}" rx="3" class="bar"></rect>
+          ${line !== null ? `<line x1="4" x2="36" y1="${line}" y2="${line}" class="limit"></line>` : ""}
+          <text x="20" y="86" class="label">${escape(label)}</text>
+          <text x="20" y="${66 - height}" class="value">${day.minuten}</text>
+        </g>`;
+      })
+      .join("");
+    const sum = days.reduce((total, day) => total + day.minuten, 0);
+    const blocked = days.reduce((total, day) => total + (day.gesperrt || 0), 0);
+    return `<div class="line"><span>${t.youtubeToday}</span><span>${escape(a.youtube_heute ?? 0)} min ${limit}${outside}</span></div>
+      <div class="add">
+        <button class="chip" data-action="bonus" data-profile="${escape(a.profil)}" data-minutes="15">+15 min</button>
+        <button class="chip" data-action="bonus" data-profile="${escape(a.profil)}" data-minutes="30">+30 min</button>
+        ${a.bonus_heute ? `<span class="hint">${t.bonus}: ${a.bonus_heute} min</span>` : ""}
+      </div>
+      ${this._stepper(ids.limit_weekday, t.limitWeekday, 5)}
+      ${this._stepper(ids.limit_weekend, t.limitWeekend, 5)}
+      <div class="stepper"><span>${t.windowWeekday}</span><div>${this._timeInput(ids.window_weekday_start)}–${this._timeInput(ids.window_weekday_end)}</div></div>
+      <div class="stepper"><span>${t.windowWeekend}</span><div>${this._timeInput(ids.window_weekend_start)}–${this._timeInput(ids.window_weekend_end)}</div></div>
+      <div class="hint">${t.allDay}</div>
+      ${days.length ? `<h3>${t.week}</h3><svg class="week" viewBox="0 0 280 92">${bars}</svg>
+        <div class="hint">${t.weekSum}: ${sum} min · ${blocked} ${t.blockedCount}</div>` : ""}`;
+  }
+
+  _allowedVideos(a) {
+    const t = this._t;
+    const videos = a.erlaubte_videos || [];
+    if (!videos.length) return "";
+    return `<div class="section"><h3>${t.allowedVideos}</h3><ul>${videos
+      .map(
+        (video) => `<li><span>${escape(video.titel)} <small>${escape(video.kanal || "")}</small></span>
+          <button class="icon" title="${t.remove}" data-action="remove-video" data-video="${escape(video.schluessel)}" data-profile="${escape(a.profil)}"><ha-icon icon="mdi:close"></ha-icon></button></li>`,
+      )
+      .join("")}</ul></div>`;
+  }
+
   _profilesView(lock) {
     const t = this._t;
     const sections = this._profiles(lock).map((profile) => {
@@ -655,8 +764,10 @@ class ParentControlCard extends HTMLElement {
         <div class="profile-head">${this._avatar(profile)}<div class="main"><div class="name">${escape(a.name)}</div>
           <div class="sub">${t.watchToday}: ${escape(profile.state)} ${t.minutes}</div></div></div>
         ${this._stepper(ids.age, t.age)}
+        ${this._timeBlock(profile)}
         ${[...RULES, ...INHERIT].map((setting) => this._toggle(ids[setting], t.settings[setting])).join("")}
         ${this._lists(a, a.profil)}
+        ${this._allowedVideos(a)}
       </div>`;
     });
     return `<div class="crumb"><button class="link" data-action="back"><ha-icon icon="mdi:arrow-left"></ha-icon>${t.back}</button><span>${t.profiles}</span></div>
@@ -721,6 +832,12 @@ class ParentControlCard extends HTMLElement {
   }
 
   async _onChange(event) {
+    const time = event.target.closest("input[data-time-entity]");
+    if (time) {
+      time.blur();
+      await this._call("time", "set_value", { entity_id: time.dataset.timeEntity, time: `${time.value}:00` });
+      return;
+    }
     const select = event.target.closest("select.who");
     if (!select) return;
     const lock = this._lock();
@@ -807,7 +924,7 @@ class ParentControlCard extends HTMLElement {
       }
       case "number": {
         const value = Number(data.value);
-        if (value < 0 || value > 18) return;
+        if (value < 0) return;
         await this._call("number", "set_value", { entity_id: data.entity, value });
         return;
       }
@@ -849,6 +966,30 @@ class ParentControlCard extends HTMLElement {
         }
         return;
       }
+      case "bonus":
+        await this._call("parentcontrol", "add_time", {
+          profile: data.profile,
+          minutes: Number(data.minutes),
+        });
+        return;
+      case "remove-video":
+        await this._call("parentcontrol", "remove_video", { video: data.video, profile: data.profile });
+        return;
+      case "transcript":
+        try {
+          const result = await this._hass.callWS({
+            type: "call_service",
+            domain: "parentcontrol",
+            service: "get_transcript",
+            service_data: { video: data.key },
+            return_response: true,
+          });
+          this._transcripts[data.key] = result?.response?.transkript || "";
+          this._message = "";
+        } catch (error) {
+          this._message = error?.message || String(error);
+        }
+        break;
       case "ask":
         this._choice = { key: data.key, allow: data.allow === "1", channel: data.channel };
         break;
@@ -947,6 +1088,13 @@ const STYLE = `
   .key { height: 56px; border-radius: 50%; font-size: 1.3em; background: var(--secondary-background-color);
     display: inline-flex; align-items: center; justify-content: center; }
   .key.ok { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  input.time { flex: none; min-width: 0; width: 92px; padding: 4px 6px; }
+  .week { width: 100%; max-width: 360px; height: auto; }
+  .week .bar { fill: var(--primary-color); }
+  .week .limit { stroke: var(--error-color, #db4437); stroke-width: 2; stroke-dasharray: 4 3; }
+  .week .label, .week .value { font-size: 10px; text-anchor: middle; fill: var(--secondary-text-color); }
+  pre.transcript { white-space: pre-wrap; max-height: 240px; overflow: auto; font-size: 0.85em;
+    background: var(--secondary-background-color); padding: 8px; border-radius: 8px; margin: 6px 0; }
 `;
 
 // Visual editor; booleans are only stored when switched off, names only when set.

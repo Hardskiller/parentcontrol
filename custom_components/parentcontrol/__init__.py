@@ -6,7 +6,7 @@ from pathlib import Path
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
@@ -20,14 +20,21 @@ from .const import (
     DEVICE_SETTINGS,
     DOMAIN,
     HEALTH,
+    LIMITS,
     MAX_AGE,
+    MAX_BONUS_MINUTES,
     PROFILE_SETTINGS,
+    SERVICE_ADD_TIME,
     SERVICE_ALLOW_CHANNEL,
+    SERVICE_ALLOW_VIDEO,
     SERVICE_ALLOW_WORD,
     SERVICE_BLOCK_CHANNEL,
+    SERVICE_GET_TRANSCRIPT,
     SERVICE_REMOVE_CHANNEL,
+    SERVICE_REMOVE_VIDEO,
     SERVICE_REMOVE_WORD,
     STATS,
+    WINDOWS,
 )
 from .monitor import Monitor
 from .pinlock import PinLock
@@ -39,11 +46,14 @@ PLATFORMS = [
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
+    Platform.TIME,
 ]
 
 ATTR_AGE = "age"
 ATTR_CHANNEL = "channel"
 ATTR_LIST = "list"
+ATTR_MINUTES = "minutes"
+ATTR_VIDEO = "video"
 ATTR_PLAYER = "player"
 ATTR_PROFILE = "profile"
 ATTR_WORD = "word"
@@ -62,6 +72,20 @@ REMOVE_SCHEMA = CHANNEL_SCHEMA.extend(
 )
 WORD_SCHEMA = vol.Schema(
     {vol.Required(ATTR_WORD): cv.string, vol.Optional(ATTR_PROFILE): cv.string}
+)
+ADD_TIME_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_PROFILE): cv.string,
+        vol.Required(ATTR_MINUTES): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=MAX_BONUS_MINUTES)
+        ),
+    }
+)
+ALLOW_VIDEO_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_PLAYER): cv.entity_id, vol.Optional(ATTR_PROFILE): cv.string}
+)
+VIDEO_SCHEMA = vol.Schema(
+    {vol.Required(ATTR_VIDEO): cv.string, vol.Optional(ATTR_PROFILE): cv.string}
 )
 
 CARD_URL = f"/{DOMAIN}/{DOMAIN}-card.js"
@@ -91,13 +115,17 @@ def entity_ids(
         roles = {
             "profile": ("sensor", prefix),
             "age": ("number", f"{prefix}_age"),
+            "remaining": ("sensor", f"{prefix}_remaining"),
             **{setting: ("switch", f"{prefix}_{setting}") for setting in PROFILE_SETTINGS},
+            **{limit: ("number", f"{prefix}_{limit}") for limit in LIMITS},
+            **{window: ("time", f"{prefix}_{window}") for window in WINDOWS},
         }
     else:
         prefix = entry.entry_id
         roles = {
             "lock": ("lock", f"{prefix}_settings_lock"),
             "check": ("switch", f"{prefix}_check"),
+            "report": ("sensor", f"{prefix}_daily_report"),
             **{stat: ("sensor", f"{prefix}_{stat}") for stat in STATS},
             **{name: ("binary_sensor", f"{prefix}_{name}_health") for name in HEALTH},
         }
@@ -149,7 +177,7 @@ def player_device_info(hass: HomeAssistant, entry: ConfigEntry, player: str) -> 
         identifiers={(DOMAIN, f"{entry.entry_id}_{player}")},
         name=f"ParentControl {player_name(hass, player)}",
         entry_type=DeviceEntryType.SERVICE,
-        via_device=(DOMAIN, entry.entry_id),
+        via_device_id=entry.runtime_data.device_id,
     )
 
 
@@ -159,7 +187,7 @@ def profile_device_info(entry: ConfigEntry, profile: str) -> DeviceInfo:
         identifiers={(DOMAIN, f"{entry.entry_id}_profile_{profile}")},
         name=f"ParentControl {entry.options['profiles'][profile][CONF_NAME]}",
         entry_type=DeviceEntryType.SERVICE,
-        via_device=(DOMAIN, entry.entry_id),
+        via_device_id=entry.runtime_data.device_id,
     )
 
 
@@ -186,6 +214,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ParentControlConfigEntry
     monitor = Monitor(hass, entry, lock)
     await monitor.async_load()
     entry.runtime_data = monitor
+    # Players and profiles hang below this device, which links by its id.
+    monitor.device_id = (
+        dr.async_get(hass)
+        .async_get_or_create(config_entry_id=entry.entry_id, **device_info(entry))
+        .id
+    )
     _remove_stale_devices(hass, entry, monitor)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     monitor.async_start()
@@ -226,7 +260,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ParentControlConfigEntry
         await lock.async_authorize(call.context, loosens=allow)
         monitor.async_set_word(allow, call.data[ATTR_WORD], profile)
 
+    async def async_add_time(call: ServiceCall) -> None:
+        """Give a child extra minutes for today."""
+        profile = find_profile(call)
+        await lock.async_authorize(call.context, loosens=True)
+        monitor.async_add_time(profile, call.data[ATTR_MINUTES])
+
+    async def async_allow_video(call: ServiceCall) -> None:
+        """Allow the running video for one child or the children watching, and play it."""
+        player = call.data[ATTR_PLAYER]
+        if player not in monitor.players:
+            raise ServiceValidationError(f"{player} wird nicht überwacht")
+        profile = find_profile(call)
+        await lock.async_authorize(call.context, loosens=True)
+        profiles = [profile] if profile else monitor.active_profiles(player)
+        monitor.async_allow_video(player, profiles or list(monitor.device_profiles.get(player, [])))
+
+    async def async_remove_video(call: ServiceCall) -> None:
+        """Take a video off the allowed list."""
+        monitor.async_remove_video(call.data[ATTR_VIDEO], find_profile(call))
+
+    async def async_get_transcript(call: ServiceCall) -> ServiceResponse:
+        """Return the transcript of a blocked video; it can contain swear words."""
+        await lock.async_authorize(call.context, loosens=True)
+        return {"transkript": monitor.transcript(call.data[ATTR_VIDEO])}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_TRANSCRIPT,
+        async_get_transcript,
+        vol.Schema({vol.Required(ATTR_VIDEO): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    entry.async_on_unload(lambda: hass.services.async_remove(DOMAIN, SERVICE_GET_TRANSCRIPT))
     for service, handler, schema in (
+        (SERVICE_ADD_TIME, async_add_time, ADD_TIME_SCHEMA),
+        (SERVICE_ALLOW_VIDEO, async_allow_video, ALLOW_VIDEO_SCHEMA),
+        (SERVICE_REMOVE_VIDEO, async_remove_video, VIDEO_SCHEMA),
         (SERVICE_ALLOW_CHANNEL, async_list_channel, CHANNEL_SCHEMA),
         (SERVICE_BLOCK_CHANNEL, async_list_channel, CHANNEL_SCHEMA),
         (SERVICE_REMOVE_CHANNEL, async_list_channel, REMOVE_SCHEMA),

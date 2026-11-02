@@ -39,7 +39,8 @@
           "model": "Modell",
           "players": "Überwachte Media Player",
           "pin": "Neuer PIN (leer lassen, um ihn zu behalten)",
-          "history_size": "Gespeicherte Videos pro Gerät"
+          "history_size": "Gespeicherte Videos pro Gerät",
+          "warn_minutes": "Vorwarnung vor Limit und Schauzeit-Ende (Minuten)"
         }
       },
       "prompts": {
@@ -96,10 +97,6 @@
           "profile": "Kind"
         }
       },
-      "assign": {
-        "title": "Kinder den Geräten zuordnen",
-        "description": "Wähle pro Gerät, welche Kinder dort schauen. Bei mehreren gilt die strengste Regel."
-      },
       "profile_lists": {
         "title": "Listen für {profile}",
         "description": "Gilt zusätzlich zu den Listen für alle Kinder. Ob die globalen Freigaben und Wörter übernommen werden, stellst du am Profil ein.",
@@ -107,6 +104,13 @@
           "allowed_channels": "Freigegebene Kanäle",
           "blocked_channels": "Gesperrte Kanäle",
           "allowed_words": "Erlaubte Schimpfwörter"
+        }
+      },
+      "assign_player": {
+        "title": "Kinder für {device}",
+        "description": "Wähle, welche Kinder an diesem Gerät schauen. Bei mehreren gilt die strengste Regel.",
+        "data": {
+          "profiles": "Kinder"
         }
       }
     },
@@ -122,6 +126,12 @@
     "number": {
       "profile_age": {
         "name": "Alter"
+      },
+      "limit_weekday": {
+        "name": "YouTube-Limit Mo–Fr"
+      },
+      "limit_weekend": {
+        "name": "YouTube-Limit Sa–So"
       }
     },
     "switch": {
@@ -187,6 +197,12 @@
       },
       "profile_watch_time": {
         "name": "Schauzeit heute"
+      },
+      "remaining": {
+        "name": "Restzeit heute"
+      },
+      "daily_report": {
+        "name": "Tagesbericht"
       }
     },
     "lock": {
@@ -205,6 +221,20 @@
     "select": {
       "who": {
         "name": "Wer schaut?"
+      }
+    },
+    "time": {
+      "window_weekday_start": {
+        "name": "Schauzeit Mo–Fr ab"
+      },
+      "window_weekday_end": {
+        "name": "Schauzeit Mo–Fr bis"
+      },
+      "window_weekend_start": {
+        "name": "Schauzeit Sa–So ab"
+      },
+      "window_weekend_end": {
+        "name": "Schauzeit Sa–So bis"
       }
     }
   },
@@ -296,6 +326,58 @@
         "profile": {
           "name": "Profil",
           "description": "Name oder ID eines Kindes. Leer gilt für alle Kinder."
+        }
+      }
+    },
+    "add_time": {
+      "name": "Bonuszeit geben",
+      "description": "Gibt einem Kind heute zusätzliche YouTube-Minuten. Braucht den PIN.",
+      "fields": {
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes."
+        },
+        "minutes": {
+          "name": "Minuten",
+          "description": "Zusätzliche Minuten für heute."
+        }
+      }
+    },
+    "allow_video": {
+      "name": "Video erlauben",
+      "description": "Erlaubt das laufende Video für ein Kind oder die Kinder, die gerade schauen, und spielt es weiter. Braucht den PIN.",
+      "fields": {
+        "player": {
+          "name": "Media Player",
+          "description": "Gerät, auf dem das Video läuft."
+        },
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes."
+        }
+      }
+    },
+    "remove_video": {
+      "name": "Erlaubtes Video entfernen",
+      "description": "Nimmt ein Video von der Liste der erlaubten Videos.",
+      "fields": {
+        "video": {
+          "name": "Video",
+          "description": "Schlüssel des Videos aus der Liste, Titel und Kanal durch einen Zeilenumbruch getrennt."
+        },
+        "profile": {
+          "name": "Profil",
+          "description": "Name oder ID eines Kindes."
+        }
+      }
+    },
+    "get_transcript": {
+      "name": "Transkript abrufen",
+      "description": "Liefert das gespeicherte Transkript eines gesperrten Videos. Braucht den PIN.",
+      "fields": {
+        "video": {
+          "name": "Video",
+          "description": "Schlüssel des Videos aus dem Verlauf."
         }
       }
     }

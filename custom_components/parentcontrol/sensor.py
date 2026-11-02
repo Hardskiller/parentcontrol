@@ -30,6 +30,8 @@ async def async_setup_entry(
     async_add_entities(
         [
             *(ProfileSensor(entry, profile) for profile in entry.runtime_data.profiles),
+            *(RemainingSensor(entry, profile) for profile in entry.runtime_data.profiles),
+            DailyReportSensor(entry),
             *(StatusSensor(hass, entry, player) for player in players),
             *(WatchTimeSensor(hass, entry, player) for player in players),
             *(HistorySensor(hass, entry, player) for player in players),
@@ -170,7 +172,15 @@ class ProfileSensor(ParentControlSensor):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_translation_key = "profile_watch_time"
     _unrecorded_attributes = frozenset(
-        {"entitaeten", "freigegeben", "gesperrt", "erlaubte_woerter", "bild"}
+        {
+            "entitaeten",
+            "freigegeben",
+            "gesperrt",
+            "erlaubte_woerter",
+            "bild",
+            "woche",
+            "erlaubte_videos",
+        }
     )
 
     def __init__(self, entry: ParentControlConfigEntry, profile: str) -> None:
@@ -196,8 +206,56 @@ class ProfileSensor(ParentControlSensor):
             "person": person,
             "bild": person_state.attributes.get("entity_picture") if person_state else None,
             "entitaeten": entity_ids(self.hass, self._entry, profile=self._profile),
+            "youtube_heute": self._monitor.youtube_minutes(self._profile),
+            "limit_heute": self._monitor.limit_today(self._profile),
+            "bonus_heute": self._monitor.bonus_minutes(self._profile),
+            "restzeit": self._monitor.remaining_minutes(self._profile),
+            "zeitfenster_heute": list(self._monitor.window(self._profile)),
+            "im_zeitfenster": self._monitor.in_viewing_time(self._profile),
+            "woche": self._monitor.week(self._profile),
+            "erlaubte_videos": self._monitor.allowed_videos(self._profile),
             **self._monitor.lists(self._profile),
         }
+
+
+class RemainingSensor(ParentControlSensor):
+    """YouTube minutes left today for one child; unknown without a limit."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_translation_key = "remaining"
+
+    def __init__(self, entry: ParentControlConfigEntry, profile: str) -> None:
+        super().__init__(entry)
+        self._profile = profile
+        self._attr_unique_id = f"{entry.entry_id}_profile_{profile}_remaining"
+        self._attr_device_info = profile_device_info(entry, profile)
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the minutes left."""
+        return self._monitor.remaining_minutes(self._profile)
+
+
+class DailyReportSensor(ParentControlSensor):
+    """Today per child and the blocked videos, for the daily report blueprint."""
+
+    _attr_translation_key = "daily_report"
+    _unrecorded_attributes = frozenset({"kinder", "gesperrte_videos"})
+
+    def __init__(self, entry: ParentControlConfigEntry) -> None:
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_daily_report"
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of blocked videos today."""
+        return len(self._monitor.daily_report()["gesperrte_videos"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the report."""
+        return self._monitor.daily_report()
 
 
 class StatSensor(ParentControlSensor):

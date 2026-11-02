@@ -65,3 +65,43 @@ remove_word:
     profile:
       selector:
         text:
+add_time:
+  fields:
+    profile:
+      required: true
+      selector:
+        text:
+    minutes:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 240
+          mode: box
+allow_video:
+  fields:
+    player:
+      required: true
+      selector:
+        entity:
+          domain: media_player
+    profile:
+      selector:
+        text:
+remove_video:
+  fields:
+    video:
+      required: true
+      selector:
+        text:
+          multiline: true
+    profile:
+      selector:
+        text:
+get_transcript:
+  fields:
+    video:
+      required: true
+      selector:
+        text:
+          multiline: true

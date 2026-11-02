@@ -1,0 +1,59 @@
+blueprint:
+  name: ParentControl – daily report
+  description: >-
+    Sends a short evening report: YouTube time, limit, extra time and videos
+    per child, and the videos blocked today with the kind of block.
+  domain: automation
+  source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/daily_report.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: Device of the Home Assistant app that receives the report.
+      selector:
+        device:
+          integration: mobile_app
+    report:
+      name: Daily report sensor
+      selector:
+        entity:
+          filter:
+            - integration: parentcontrol
+              domain: sensor
+    at:
+      name: Time
+      default: "20:00:00"
+      selector:
+        time:
+
+mode: single
+
+trigger:
+  - trigger: time
+    at: !input at
+
+variables:
+  report: !input report
+  kinds:
+    alter: zu jung
+    paedagogik: nicht pädagogisch
+    schimpfwoerter: Schimpfwörter
+    keine_untertitel: keine Untertitel
+    nicht_geprueft: nicht geprüft
+    kanal_gesperrt: Kanal gesperrt
+    short: Short
+    keine_daten: kein Titel
+    zeitlimit: Zeitlimit
+    schauzeit: Schauzeit
+  children: "{{ state_attr(report, 'kinder') or [] }}"
+  blocked: "{{ state_attr(report, 'gesperrte_videos') or [] }}"
+
+action:
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "ParentControl: Tagesbericht"
+    message: >-
+      {% for child in children %}{{ child.name }}: {{ child.youtube_minuten }}{% if child.limit %} von {{ child.limit + child.bonus }}{% endif %} min YouTube{% if child.bonus %} (Bonus {{ child.bonus }}){% endif %}, {{ child.videos }} Videos, {{ child.gesperrt }} gesperrt
+      {% endfor %}{% if blocked %}Gesperrt:
+      {% for video in blocked[:10] %}{{ video.zeit }} {{ video.kinder | join(', ') }}: {{ video.titel }} ({{ kinds.get(video.art, video.art) }})
+      {% endfor %}{% if blocked | length > 10 %}und {{ blocked | length - 10 }} weitere{% endif %}{% else %}Heute wurde nichts gesperrt.{% endif %}

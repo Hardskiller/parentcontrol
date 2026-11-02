@@ -1,0 +1,95 @@
+blueprint:
+  name: ParentControl – announce on pause
+  description: >-
+    Announces on a speaker why YouTube was paused or that time is running out,
+    in words for children and without swear words. Use a speaker other than
+    the TV: an announcement through Cast on the TV itself closes YouTube.
+  domain: automation
+  source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/announce.yaml
+  input:
+    player:
+      name: TV
+      description: Only announce for these monitored media players. Empty announces for all.
+      default: []
+      selector:
+        entity:
+          domain: media_player
+          multiple: true
+    speaker:
+      name: Speaker
+      description: Media player that speaks the announcement.
+      selector:
+        entity:
+          domain: media_player
+    tts:
+      name: Text to speech
+      selector:
+        entity:
+          domain: tts
+    on_block:
+      name: Blocked videos
+      default: true
+      selector:
+        boolean:
+    on_warning:
+      name: Warning before limit or end of viewing time
+      default: true
+      selector:
+        boolean:
+    on_reached:
+      name: Limit or end of viewing time reached
+      default: true
+      selector:
+        boolean:
+
+mode: queued
+
+trigger:
+  - trigger: event
+    event_type: parentcontrol_paused
+    id: block
+  - trigger: event
+    event_type: parentcontrol_limit_warning
+    id: warning
+  - trigger: event
+    event_type: parentcontrol_limit_reached
+    id: reached
+
+variables:
+  players: !input player
+  on_block: !input on_block
+  on_warning: !input on_warning
+  on_reached: !input on_reached
+  data: "{{ trigger.event.data }}"
+  texts:
+    alter: "Dieses Video ist erst ab {{ trigger.event.data.min_age }} Jahren."
+    paedagogik: "Dieses Video ist gerade nicht erlaubt. Such dir etwas zum Lernen aus."
+    schimpfwoerter: "In diesem Video wird geschimpft. Such dir bitte ein anderes aus."
+    keine_untertitel: "Dieses Video konnte nicht geprüft werden."
+    nicht_geprueft: "Dieses Video konnte nicht geprüft werden."
+    kanal_gesperrt: "Dieser Kanal ist nicht erlaubt."
+    short: "Shorts sind nicht erlaubt."
+    keine_daten: "YouTube konnte hier nicht geprüft werden."
+  message: >-
+    {% if trigger.id == 'block' %}{{ texts.get(data.block_reason, 'Dieses Video ist nicht erlaubt.') }}
+    {% elif trigger.id == 'warning' and data.reason == 'zeitlimit' %}Noch {{ data.minutes }} Minuten YouTube für heute.
+    {% elif trigger.id == 'warning' %}In {{ data.minutes }} Minuten ist die YouTube-Zeit vorbei.
+    {% elif data.reason == 'zeitlimit' %}Deine YouTube-Zeit für heute ist um.
+    {% else %}Die YouTube-Zeit ist für heute vorbei.{% endif %}
+
+condition:
+  - condition: template
+    value_template: "{{ not players or data.entity_id in players }}"
+  - condition: template
+    value_template: >-
+      {{ (trigger.id == 'block' and on_block and data.block_reason not in ['zeitlimit', 'schauzeit'])
+         or (trigger.id == 'warning' and on_warning)
+         or (trigger.id == 'reached' and on_reached) }}
+
+action:
+  - action: tts.speak
+    target:
+      entity_id: !input tts
+    data:
+      media_player_entity_id: !input speaker
+      message: "{{ message }}"

@@ -39,7 +39,8 @@
           "model": "Model",
           "players": "Monitored media players",
           "pin": "New PIN (leave empty to keep it)",
-          "history_size": "Stored videos per device"
+          "history_size": "Stored videos per device",
+          "warn_minutes": "Warning before limit and end of viewing time (minutes)"
         }
       },
       "prompts": {
@@ -96,10 +97,6 @@
           "profile": "Child"
         }
       },
-      "assign": {
-        "title": "Assign children to devices",
-        "description": "Choose per device which children watch there. With several, the strictest rule applies."
-      },
       "profile_lists": {
         "title": "Lists for {profile}",
         "description": "Applies in addition to the lists for all children. Whether the global allowed channels and words are inherited is set on the profile.",
@@ -107,6 +104,13 @@
           "allowed_channels": "Allowed channels",
           "blocked_channels": "Blocked channels",
           "allowed_words": "Allowed swear words"
+        }
+      },
+      "assign_player": {
+        "title": "Children for {device}",
+        "description": "Choose which children watch on this device. With several, the strictest rule applies.",
+        "data": {
+          "profiles": "Children"
         }
       }
     },
@@ -122,6 +126,12 @@
     "number": {
       "profile_age": {
         "name": "Age"
+      },
+      "limit_weekday": {
+        "name": "YouTube limit Mon–Fri"
+      },
+      "limit_weekend": {
+        "name": "YouTube limit Sat–Sun"
       }
     },
     "switch": {
@@ -187,6 +197,12 @@
       },
       "profile_watch_time": {
         "name": "Watch time today"
+      },
+      "remaining": {
+        "name": "Remaining time today"
+      },
+      "daily_report": {
+        "name": "Daily report"
       }
     },
     "lock": {
@@ -205,6 +221,20 @@
     "select": {
       "who": {
         "name": "Who is watching?"
+      }
+    },
+    "time": {
+      "window_weekday_start": {
+        "name": "Viewing time Mon–Fri from"
+      },
+      "window_weekday_end": {
+        "name": "Viewing time Mon–Fri until"
+      },
+      "window_weekend_start": {
+        "name": "Viewing time Sat–Sun from"
+      },
+      "window_weekend_end": {
+        "name": "Viewing time Sat–Sun until"
       }
     }
   },
@@ -296,6 +326,58 @@
         "profile": {
           "name": "Profile",
           "description": "Name or ID of a child. Empty applies to all children."
+        }
+      }
+    },
+    "add_time": {
+      "name": "Give extra time",
+      "description": "Gives a child extra YouTube minutes for today. Needs the PIN.",
+      "fields": {
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Extra minutes for today."
+        }
+      }
+    },
+    "allow_video": {
+      "name": "Allow video",
+      "description": "Allows the running video for one child or the children watching, and plays it on. Needs the PIN.",
+      "fields": {
+        "player": {
+          "name": "Media player",
+          "description": "Device the video runs on."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child."
+        }
+      }
+    },
+    "remove_video": {
+      "name": "Remove allowed video",
+      "description": "Takes a video off the allowed videos.",
+      "fields": {
+        "video": {
+          "name": "Video",
+          "description": "Key of the video from the list, title and channel separated by a line break."
+        },
+        "profile": {
+          "name": "Profile",
+          "description": "Name or ID of a child."
+        }
+      }
+    },
+    "get_transcript": {
+      "name": "Get transcript",
+      "description": "Returns the stored transcript of a blocked video. Needs the PIN.",
+      "fields": {
+        "video": {
+          "name": "Video",
+          "description": "Key of the video from the history."
         }
       }
     }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import time as dt_time
 
 from . import engine
 from .const import (
@@ -107,3 +108,44 @@ def profile_rules(
         frozenset(engine.parse_blocked(global_blocked) | engine.parse_blocked(blocked)),
         tuple(patterns),
     )
+
+
+MINUTES_PER_DAY = 24 * 60
+
+
+def parse_time(value: str) -> int:
+    """Return the minute of the day of "HH:MM"."""
+    hours, _, minutes = value.partition(":")
+    return int(hours) * 60 + int(minutes or 0)
+
+
+def format_time(value: dt_time) -> str:
+    """Store a time as "HH:MM"."""
+    return f"{value.hour:02d}:{value.minute:02d}"
+
+
+def window_minutes(start: str, end: str) -> set[int]:
+    """Return the minutes of a day inside a window; it may cross midnight."""
+    first, last = parse_time(start), parse_time(end)
+    if first == last:
+        return set(range(MINUTES_PER_DAY))
+    if first < last:
+        return set(range(first, last))
+    return set(range(first, MINUTES_PER_DAY)) | set(range(last))
+
+
+def in_window(start: str, end: str, minute: int) -> bool:
+    """Return whether a minute of the day lies inside a window."""
+    return minute in window_minutes(start, end)
+
+
+def minutes_to_end(start: str, end: str, minute: int) -> int | None:
+    """Minutes until the window closes; None for all day or outside."""
+    if start == end or not in_window(start, end, minute):
+        return None
+    return (parse_time(end) - minute) % MINUTES_PER_DAY
+
+
+def limit_loosens(old: int, new: int) -> bool:
+    """A higher limit, or no limit instead of one, weakens the protection."""
+    return old > 0 and (new == 0 or new > old)

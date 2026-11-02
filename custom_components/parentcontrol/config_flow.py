@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import engine
+from . import engine, player_name
 from .const import (
     CONF_AGE,
     CONF_AGE_PROMPT,
@@ -33,11 +33,13 @@ from .const import (
     CONF_PROFILE_BLOCKED,
     CONF_PROFILE_WORDS,
     CONF_PROFILES,
+    CONF_WARN_MINUTES,
     DEFAULT_OLLAMA_URL,
     DOMAIN,
     HISTORY_SIZE,
     MAX_AGE,
     MAX_HISTORY_SIZE,
+    WARN_MINUTES,
 )
 from .pinlock import hash_pin, valid_pin
 
@@ -197,6 +199,7 @@ class ParentControlOptionsFlow(OptionsFlow):
         self._options: dict[str, Any] = {}
         self._editing: str | None = None
         self._open_profiles: list[str] = []
+        self._open_players: list[str] = []
 
     @property
     def _profiles(self) -> dict[str, dict]:
@@ -217,6 +220,7 @@ class ParentControlOptionsFlow(OptionsFlow):
                     **current,
                     **user_input,
                     CONF_HISTORY_SIZE: int(user_input[CONF_HISTORY_SIZE]),
+                    CONF_WARN_MINUTES: int(user_input[CONF_WARN_MINUTES]),
                     CONF_PIN_HASH: (
                         await self.hass.async_add_executor_job(hash_pin, pin)
                         if pin
@@ -241,6 +245,11 @@ class ParentControlOptionsFlow(OptionsFlow):
             selector.NumberSelectorConfig(
                 min=5, max=MAX_HISTORY_SIZE, step=5, mode=selector.NumberSelectorMode.BOX
             )
+        )
+        fields[
+            vol.Required(CONF_WARN_MINUTES, default=current.get(CONF_WARN_MINUTES, WARN_MINUTES))
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(min=1, max=30, step=1, mode=selector.NumberSelectorMode.BOX)
         )
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
 
@@ -312,26 +321,39 @@ class ParentControlOptionsFlow(OptionsFlow):
     async def async_step_assign(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Assign the children to each player; every player needs one."""
+        """Start the assignment, one step per player."""
+        self._open_players = list(self._options[CONF_PLAYERS])
+        self._assigned: dict[str, list[str]] = {}
+        return await self.async_step_assign_player()
+
+    async def async_step_assign_player(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose the children watching on one player; every player needs one."""
+        player = self._open_players[0]
         errors: dict[str, str] = {}
-        players = self._options[CONF_PLAYERS]
         if user_input is not None:
-            if all(user_input.get(player) for player in players):
-                self._options[CONF_DEVICE_PROFILES] = {
-                    player: list(user_input[player]) for player in players
-                }
+            if user_input.get(CONF_PROFILES):
+                self._assigned[player] = list(user_input[CONF_PROFILES])
+                self._open_players.pop(0)
+                if self._open_players:
+                    return await self.async_step_assign_player()
+                self._options[CONF_DEVICE_PROFILES] = self._assigned
                 return await self.async_step_lists()
             errors["base"] = "no_profile"
-        current = self._options[CONF_DEVICE_PROFILES]
-        fields = {
-            vol.Optional(
-                player,
-                default=[pid for pid in current.get(player, list(self._profiles)) if pid in self._profiles],
-            ): _profile_choice(self._profiles, True)
-            for player in players
-        }
+        current = self._options[CONF_DEVICE_PROFILES].get(player, list(self._profiles))
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_PROFILES, default=[pid for pid in current if pid in self._profiles]
+                ): _profile_choice(self._profiles, True)
+            }
+        )
         return self.async_show_form(
-            step_id="assign", data_schema=vol.Schema(fields), errors=errors
+            step_id="assign_player",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"device": player_name(self.hass, player)},
         )
 
     async def async_step_lists(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

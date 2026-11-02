@@ -1,0 +1,57 @@
+blueprint:
+  name: ParentControl – time limit
+  description: >-
+    Sends a push notification shortly before a child's YouTube limit or the end
+    of its viewing time, and when it is reached.
+  domain: automation
+  source_url: https://github.com/Hardskiller/parentcontrol/blob/main/blueprints/automation/parentcontrol/time_limit.yaml
+  input:
+    notify_device:
+      name: Phone
+      description: Device of the Home Assistant app that receives the notification.
+      selector:
+        device:
+          integration: mobile_app
+    on_warning:
+      name: Warn before
+      description: Notify before the limit or the end of the viewing time.
+      default: true
+      selector:
+        boolean:
+    on_reached:
+      name: When reached
+      description: Notify when the limit or the end of the viewing time is reached.
+      default: true
+      selector:
+        boolean:
+
+mode: queued
+
+trigger:
+  - trigger: event
+    event_type: parentcontrol_limit_warning
+    id: warning
+  - trigger: event
+    event_type: parentcontrol_limit_reached
+    id: reached
+
+variables:
+  on_warning: !input on_warning
+  on_reached: !input on_reached
+  child: "{{ trigger.event.data.profile }}"
+  limit: "{{ trigger.event.data.reason == 'zeitlimit' }}"
+
+condition:
+  - condition: template
+    value_template: "{{ (trigger.id == 'warning' and on_warning) or (trigger.id == 'reached' and on_reached) }}"
+
+action:
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "ParentControl: {{ child }}"
+    message: >-
+      {% if trigger.id == 'warning' and limit %}Noch {{ trigger.event.data.minutes }} Minuten YouTube für heute.
+      {% elif trigger.id == 'warning' %}Die Schauzeit endet in {{ trigger.event.data.minutes }} Minuten.
+      {% elif limit %}Das YouTube-Limit für heute ist erreicht.
+      {% else %}Die Schauzeit ist vorbei.{% endif %}
