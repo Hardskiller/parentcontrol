@@ -1623,3 +1623,32 @@ async def test_week_keeps_seven_days(hass, pauses, freezer):
         await hass.async_block_till_done()
     assert len(entry.runtime_data.week(KIND)) <= 7
     patcher.stop()
+
+
+async def test_changed_limit_shows_at_once_in_remaining_time(hass, pauses):
+    entry, _, patcher = await setup(hass)
+    remaining = unique(hass, "sensor", "profile_kind_remaining")
+    assert hass.states.get(remaining).state == "unknown"
+    await hass.services.async_call(
+        "number", "set_value",
+        {ATTR_ENTITY_ID: unique(hass, "number", "profile_kind_limit_weekday"), "value": 120},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "number", "set_value",
+        {ATTR_ENTITY_ID: unique(hass, "number", "profile_kind_limit_weekend"), "value": 120},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(remaining).state == "120"
+    assert hass.states.get(PROFILE_WATCH).attributes["limit_heute"] == 120
+    patcher.stop()
+
+
+async def test_viewing_time_flag_follows_the_clock(hass, pauses, freezer):
+    entry, _, patcher = await setup(hass)
+    set_window(entry, hhmm(-60), hhmm(2))
+    assert hass.states.get(PROFILE_WATCH).attributes["im_zeitfenster"] is True
+    await tick(hass, freezer, 180, step=30)
+    assert hass.states.get(PROFILE_WATCH).attributes["im_zeitfenster"] is False
+    patcher.stop()

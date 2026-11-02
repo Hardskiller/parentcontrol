@@ -245,6 +245,7 @@ class Monitor:
         self.health: dict[str, bool | None] = dict.fromkeys(HEALTH)
         self._down_since: dict[str, float] = {}
         self._last_health_check = -HEALTH_INTERVAL_SECONDS
+        self._last_minute = -1
 
     async def async_load(self) -> None:
         """Restore switches, profiles, ratings, statistics and the protocol."""
@@ -332,6 +333,8 @@ class Monitor:
         self._profile_settings.setdefault(profile, {})[CONF_AGE] = age
         self._save()
         self.async_evaluate_all()
+        # Remaining time, profile attributes and the card depend on it.
+        async_dispatcher_send(self.hass, self.signal)
 
     @callback
     def async_set_profile_setting(self, profile: str, setting: str, value: bool) -> None:
@@ -339,6 +342,8 @@ class Monitor:
         self._profile_settings.setdefault(profile, {})[setting] = value
         self._save()
         self.async_evaluate_all()
+        # Remaining time, profile attributes and the card depend on it.
+        async_dispatcher_send(self.hass, self.signal)
 
     def profile_value(self, profile: str, key: str, default):
         """Return a limit or a viewing time of a child."""
@@ -350,6 +355,8 @@ class Monitor:
         self._profile_settings.setdefault(profile, {})[key] = value
         self._save()
         self.async_evaluate_all()
+        # Remaining time, profile attributes and the card depend on it.
+        async_dispatcher_send(self.hass, self.signal)
 
     @staticmethod
     def _weekend() -> bool:
@@ -708,6 +715,11 @@ class Monitor:
         self._count_watch_time()
         self._check_health()
         self.async_evaluate_all()
+        minute = dt_util.now().minute
+        if minute != self._last_minute:
+            # Whether a child is inside its viewing time changes with the clock.
+            self._last_minute = minute
+            async_dispatcher_send(self.hass, self.signal)
 
     @callback
     def _check_health(self) -> None:
