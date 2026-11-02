@@ -28,7 +28,8 @@ const TEXTS = {
     fromAge: "ab",
     today: "Heute",
     services: "Dienste",
-    reasonLabel: "Begründung",
+    reasonLabel: "Einstufung",
+    more: "Mehr anzeigen",
     pedagogyLabel: "Pädagogik",
     blockLabel: "Gesperrt",
     wordsLabel: "Schimpfwörter",
@@ -65,6 +66,17 @@ const TEXTS = {
       skipped: "Geskippt",
     },
     health: { ollama: "Ollama", yt_dlp: "YouTube-Abfrage" },
+    editor: {
+      title: "Titel",
+      entity: "Schloss-Entität (leer = automatisch)",
+      show_valuable: "Symbol für pädagogisch wertvoll",
+      show_profanity: "Symbol für Schimpfwörter",
+      show_shorts: "Symbol für Shorts",
+      show_age: "Alter in der Liste",
+      show_watch_time: "Schauzeit in der Liste",
+      history_limit: "Einträge im Verlauf vor „Mehr anzeigen“",
+      nameFor: "Anzeigename für",
+    },
     online: "verbunden",
     offline: "nicht erreichbar",
     unknown: "unbekannt",
@@ -95,7 +107,8 @@ const TEXTS = {
     fromAge: "from",
     today: "Today",
     services: "Services",
-    reasonLabel: "Reason",
+    reasonLabel: "Rating",
+    more: "Show more",
     pedagogyLabel: "Education",
     blockLabel: "Blocked",
     wordsLabel: "Swear words",
@@ -132,6 +145,17 @@ const TEXTS = {
       skipped: "Skipped",
     },
     health: { ollama: "Ollama", yt_dlp: "YouTube lookup" },
+    editor: {
+      title: "Title",
+      entity: "Lock entity (empty = automatic)",
+      show_valuable: "Marker for educational videos",
+      show_profanity: "Marker for swear words",
+      show_shorts: "Marker for Shorts",
+      show_age: "Age in the list",
+      show_watch_time: "Watch time in the list",
+      history_limit: "History entries before “Show more”",
+      nameFor: "Display name for",
+    },
     online: "connected",
     offline: "unreachable",
     unknown: "unknown",
@@ -159,6 +183,20 @@ const STATUS_ICONS = {
   aus: ["mdi:shield-off", "var(--secondary-text-color)"],
 };
 
+const OPTIONS = ["show_valuable", "show_profanity", "show_shorts", "show_age", "show_watch_time"];
+
+const texts = (hass) =>
+  TEXTS[(hass?.locale?.language || hass?.language || "en").slice(0, 2)] || TEXTS.en;
+
+const findLock = (hass, config) => {
+  const id =
+    config.entity ||
+    Object.values(hass.entities || {}).find(
+      (entry) => entry.platform === "parentcontrol" && entry.entity_id.startsWith("lock."),
+    )?.entity_id;
+  return id ? hass.states[id] : undefined;
+};
+
 const escape = (value) =>
   String(value ?? "").replace(
     /[&<>"']/g,
@@ -175,6 +213,8 @@ class ParentControlCard extends HTMLElement {
     this._pinTarget = null;
     this._message = "";
     this._drafts = {};
+    this._expanded = new Set();
+    this._limit = 0;
     this._signature = "";
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
     this.shadowRoot.addEventListener("input", (event) => {
@@ -186,8 +226,14 @@ class ParentControlCard extends HTMLElement {
     return {};
   }
 
+  static getConfigElement() {
+    return document.createElement("parentcontrol-card-editor");
+  }
+
   setConfig(config) {
     this._config = config || {};
+    this._signature = "";
+    this._render();
   }
 
   getCardSize() {
@@ -200,18 +246,11 @@ class ParentControlCard extends HTMLElement {
   }
 
   get _t() {
-    const language = (this._hass?.locale?.language || this._hass?.language || "en").slice(0, 2);
-    return TEXTS[language] || TEXTS.en;
+    return texts(this._hass);
   }
 
   _lock() {
-    const hass = this._hass;
-    const id =
-      this._config.entity ||
-      Object.values(hass.entities || {}).find(
-        (entry) => entry.platform === "parentcontrol" && entry.entity_id.startsWith("lock."),
-      )?.entity_id;
-    return id ? hass.states[id] : undefined;
+    return findLock(this._hass, this._config);
   }
 
   _devices(lock) {
@@ -250,6 +289,8 @@ class ParentControlCard extends HTMLElement {
       this._pinTarget,
       this._message,
       this._hass.user?.is_admin,
+      [...this._expanded],
+      this._limit,
     ]);
     if (signature === this._signature) return;
     const active = this.shadowRoot.activeElement;
@@ -306,28 +347,39 @@ class ParentControlCard extends HTMLElement {
     return `<ha-icon class="status" icon="${icon}" style="color:${color}"></ha-icon>`;
   }
 
+  _name(device) {
+    return this._config.names?.[device.entity_id] || device.attributes.name;
+  }
+
+  _show(option) {
+    return this._config[option] !== false;
+  }
+
   _markers(attributes) {
     const t = this._t;
     let html = "";
-    if (attributes.paedagogisch_wertvoll)
+    if (attributes.paedagogisch_wertvoll && this._show("show_valuable"))
       html += `<ha-icon class="marker valuable" icon="mdi:school" title="${t.stats.valuable}"></ha-icon>`;
-    if (attributes.schimpfwoerter)
+    if (attributes.schimpfwoerter && this._show("show_profanity"))
       html += `<ha-icon class="marker profanity" icon="mdi:message-alert" title="${t.reasons.schimpfwoerter}"></ha-icon>`;
-    if (attributes.short)
+    if (attributes.short && this._show("show_shorts"))
       html += `<ha-icon class="marker" icon="mdi:cellphone-play" title="Short"></ha-icon>`;
     return html;
   }
 
-  // The block text names the trigger; swear words also show when they did not block.
-  _reasonLines(attributes) {
+  // The block reason always shows; the model's rating only when expanded.
+  _reasonLines(attributes, full) {
     const t = this._t;
     let html = "";
-    if (attributes.sperrtext)
-      html += `<div class="sub why">${t.blockLabel}: ${escape(attributes.sperrtext)}</div>`;
+    // Entries from before 0.3.3 have no block text, only the reason key.
+    const blockText =
+      attributes.sperrtext || (attributes.sperrgrund && (t.reasons[attributes.sperrgrund] || attributes.sperrgrund));
+    if (blockText) html += `<div class="sub why">${t.blockLabel}: ${escape(blockText)}</div>`;
     const words = attributes.schimpfwoerter_liste || [];
     if (words.length && attributes.sperrgrund !== "schimpfwoerter")
       html += `<div class="sub">${t.wordsLabel}: ${escape(words.join(", "))}</div>`;
-    if (attributes.grund) html += `<div class="sub">${t.reasonLabel}: ${escape(attributes.grund)}</div>`;
+    if (full && attributes.grund)
+      html += `<div class="sub wrap">${t.reasonLabel}: ${escape(attributes.grund)}</div>`;
     return html;
   }
 
@@ -340,13 +392,13 @@ class ParentControlCard extends HTMLElement {
       return `<button class="row" data-action="open" data-target="device" data-player="${escape(device.entity_id)}">
         ${this._statusIcon(device.state)}
         <div class="main">
-          <div class="name">${escape(a.name)}</div>
+          <div class="name">${escape(this._name(device))}</div>
           <div class="sub">${a.titel ? escape(a.titel) : t.noVideo}</div>
         </div>
         <div class="markers">${this._markers(a)}</div>
         <div class="meta">
-          <div>${t.age} ${escape(age)}</div>
-          <div>${escape(watch ?? 0)} ${t.minutes}</div>
+          ${this._show("show_age") ? `<div>${t.age} ${escape(age)}</div>` : ""}
+          ${this._show("show_watch_time") ? `<div>${escape(watch ?? 0)} ${t.minutes}</div>` : ""}
         </div>
       </button>`;
     });
@@ -424,20 +476,27 @@ class ParentControlCard extends HTMLElement {
   _historyItems(entries, showDevice) {
     const t = this._t;
     if (!entries.length) return `<div class="hint">${t.noHistory}</div>`;
+    const limit = this._limit || Number(this._config.history_limit) || 10;
+    const more =
+      entries.length > limit
+        ? `<button class="link more" data-action="more" data-limit="${limit + 10}">${t.more}</button>`
+        : "";
     return `<ul class="history">${entries
+      .slice(0, limit)
       .map((entry) => {
+        const key = `${entry.zeit}|${entry.titel}`;
+        const expanded = this._expanded.has(key);
         const time = new Date(entry.zeit).toLocaleTimeString(this._hass.locale?.language, {
           hour: "2-digit",
           minute: "2-digit",
         });
-        const reason = entry.sperrgrund ? ` · ${t.reasons[entry.sperrgrund] || entry.sperrgrund}` : "";
         const age = entry.mindestalter != null ? ` · ${t.fromAge} ${entry.mindestalter}` : "";
         return `<li>
           ${this._statusIcon(entry.status)}
-          <div class="main">
-            <div class="name">${escape(entry.titel)}</div>
-            <div class="sub">${time}${showDevice ? ` · ${escape(entry.geraet)}` : ""} · ${escape(entry.kanal)}${age}${escape(reason)}</div>
-            ${this._reasonLines(entry)}
+          <div class="main" data-action="expand" data-key="${escape(key)}">
+            <div class="name ${expanded ? "wrap" : ""}">${escape(entry.titel)}</div>
+            <div class="sub">${time}${showDevice ? ` · ${escape(entry.geraet)}` : ""} · ${escape(entry.kanal)}${age}</div>
+            ${this._reasonLines(entry, expanded)}
           </div>
           <div class="markers">${this._markers(entry)}</div>
           ${
@@ -450,7 +509,7 @@ class ParentControlCard extends HTMLElement {
           }
         </li>`;
       })
-      .join("")}</ul>`;
+      .join("")}</ul>${more}`;
   }
 
   _deviceView(lock) {
@@ -465,14 +524,14 @@ class ParentControlCard extends HTMLElement {
           ${this._statusIcon(device.state)}
           <div class="main">
             <div class="name">${escape(a.titel)}</div>
-            <div class="sub">${escape(a.kanal)}${a.mindestalter != null ? ` · ${t.fromAge} ${a.mindestalter}` : ""}${a.sperrgrund ? ` · ${escape(t.reasons[a.sperrgrund] || a.sperrgrund)}` : ""}</div>
-            ${this._reasonLines(a)}
+            <div class="sub">${escape(a.kanal)}${a.mindestalter != null ? ` · ${t.fromAge} ${a.mindestalter}` : ""}</div>
+            ${this._reasonLines(a, true)}
             ${a.paedagogik_grund ? `<div class="sub">${t.pedagogyLabel}: ${escape(a.paedagogik_grund)}</div>` : ""}
           </div>
           <div class="markers">${this._markers(a)}</div>
         </div>`
       : "";
-    return `<div class="crumb"><button class="link" data-action="back"><ha-icon icon="mdi:arrow-left"></ha-icon>${t.back}</button><span>${escape(a.name)}</span></div>
+    return `<div class="crumb"><button class="link" data-action="back"><ha-icon icon="mdi:arrow-left"></ha-icon>${t.back}</button><span>${escape(this._name(device))}</span></div>
       ${current}
       <div class="section">
         ${this._stepper(ids.age, t.age)}
@@ -487,7 +546,7 @@ class ParentControlCard extends HTMLElement {
     const entries = this._devices(lock)
       .flatMap((device) =>
         (this._state(device.attributes.entitaeten?.history)?.attributes.videos || []).map(
-          (entry) => ({ ...entry, geraet: device.attributes.name }),
+          (entry) => ({ ...entry, geraet: this._name(device) }),
         ),
       )
       .sort((first, second) => second.zeit.localeCompare(first.zeit));
@@ -556,6 +615,14 @@ class ParentControlCard extends HTMLElement {
         break;
       case "back":
         this._view = "list";
+        this._limit = 0;
+        break;
+      case "more":
+        this._limit = Number(data.limit);
+        break;
+      case "expand":
+        if (this._expanded.has(data.key)) this._expanded.delete(data.key);
+        else this._expanded.add(data.key);
         break;
       case "dismiss":
         this._message = "";
@@ -655,7 +722,11 @@ const STYLE = `
   .marker { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
   .marker.valuable { color: var(--success-color, #43a047); }
   .marker.profanity { color: var(--warning-color, #ffa600); }
-  .why { color: var(--error-color, #db4437); white-space: normal; }
+  .why, .wrap { white-space: normal; }
+  .why { color: var(--error-color, #db4437); }
+  .history .main { cursor: pointer; }
+  .history .name:not(.wrap), .history .sub:not(.why):not(.wrap) { white-space: nowrap; }
+  .more { margin-top: 8px; }
   .crumb { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-weight: 500; }
   .link { display: inline-flex; align-items: center; gap: 4px; color: var(--primary-color); }
   .section { margin-top: 12px; }
@@ -693,7 +764,81 @@ const STYLE = `
   .key.ok { background: var(--primary-color); color: var(--text-primary-color, #fff); }
 `;
 
+// Visual editor; booleans are only stored when switched off, names only when set.
+class ParentControlCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._update();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._update();
+  }
+
+  _devices() {
+    const lock = findLock(this._hass, this._config);
+    return (lock?.attributes.geraete || [])
+      .map((id) => this._hass.states[id])
+      .filter(Boolean);
+  }
+
+  _update() {
+    if (!this._hass || !this._config) return;
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.addEventListener("value-changed", (event) => this._changed(event.detail.value));
+      this.appendChild(this._form);
+    }
+    const labels = texts(this._hass).editor;
+    const devices = this._devices();
+    this._form.computeLabel = (schema) => {
+      const device = devices[Number(schema.name.replace("name_", ""))];
+      return schema.name.startsWith("name_")
+        ? `${labels.nameFor} ${device?.attributes.name ?? ""}`
+        : labels[schema.name];
+    };
+    this._form.hass = this._hass;
+    this._form.schema = [
+      { name: "title", selector: { text: {} } },
+      { name: "entity", selector: { entity: { domain: "lock", integration: "parentcontrol" } } },
+      ...OPTIONS.map((name) => ({ name, selector: { boolean: {} } })),
+      { name: "history_limit", selector: { number: { min: 5, max: 60, step: 5, mode: "box" } } },
+      ...devices.map((_, index) => ({ name: `name_${index}`, selector: { text: {} } })),
+    ];
+    const names = this._config.names || {};
+    this._form.data = {
+      title: this._config.title || "",
+      entity: this._config.entity || "",
+      history_limit: this._config.history_limit || 10,
+      ...Object.fromEntries(OPTIONS.map((name) => [name, this._config[name] !== false])),
+      ...Object.fromEntries(
+        devices.map((device, index) => [`name_${index}`, names[device.entity_id] || ""]),
+      ),
+    };
+  }
+
+  _changed(value) {
+    const config = { type: this._config.type };
+    if (value.title) config.title = value.title;
+    if (value.entity) config.entity = value.entity;
+    for (const name of OPTIONS) if (value[name] === false) config[name] = false;
+    if (value.history_limit && Number(value.history_limit) !== 10)
+      config.history_limit = Number(value.history_limit);
+    const names = {};
+    this._devices().forEach((device, index) => {
+      if (value[`name_${index}`]) names[device.entity_id] = value[`name_${index}`];
+    });
+    if (Object.keys(names).length) config.names = names;
+    this._config = config;
+    this.dispatchEvent(
+      new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }),
+    );
+  }
+}
+
 customElements.define("parentcontrol-card", ParentControlCard);
+customElements.define("parentcontrol-card-editor", ParentControlCardEditor);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "parentcontrol-card",

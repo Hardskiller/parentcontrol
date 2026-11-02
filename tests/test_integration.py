@@ -25,6 +25,7 @@ from custom_components.parentcontrol.const import (
     CONF_DEVICE_AGES,
     CONF_DEVICE_ALLOWED,
     CONF_DEVICE_BLOCKED,
+    CONF_HISTORY_SIZE,
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
@@ -657,6 +658,7 @@ async def test_options_flow_stores_device_age(hass, aioclient_mock):
     assert entry.options[CONF_AGE_PROMPT] == "Mein Prompt"
     assert entry.options[CONF_PEDAGOGY_PROMPT] == engine.DEFAULT_PEDAGOGY_PROMPT
     assert entry.options[CONF_PIN_HASH] == PIN_HASH
+    assert entry.options[CONF_HISTORY_SIZE] == 20
     await hass.async_block_till_done()
     patcher.stop()
 
@@ -971,4 +973,24 @@ async def test_allowed_video_has_no_block_text(hass, pauses):
     state = hass.states.get(SENSOR)
     assert state.attributes["sperrtext"] is None
     assert state.attributes["schimpfwoerter_liste"] == ["Mist"]
+    patcher.stop()
+
+
+async def test_history_size_comes_from_the_options(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4, **{CONF_HISTORY_SIZE: 5})
+    for number in range(8):
+        await play(hass, attributes={**VIDEO, "media_title": f"Video {number}"})
+    videos = hass.states.get(HISTORY).attributes["videos"]
+    assert [video["titel"] for video in videos] == [f"Video {n}" for n in range(7, 2, -1)]
+    patcher.stop()
+
+
+async def test_smaller_history_size_shortens_stored_lists(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4)
+    for number in range(8):
+        await play(hass, attributes={**VIDEO, "media_title": f"Video {number}"})
+    await entry.runtime_data.async_save_now()
+    hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_HISTORY_SIZE: 5})
+    await hass.async_block_till_done()
+    assert len(hass.states.get(HISTORY).attributes["videos"]) == 5
     patcher.stop()

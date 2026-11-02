@@ -19,6 +19,7 @@ from .const import (
     CONF_DEVICE_AGES,
     CONF_DEVICE_ALLOWED,
     CONF_DEVICE_BLOCKED,
+    CONF_HISTORY_SIZE,
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
@@ -27,7 +28,9 @@ from .const import (
     CONF_PLAYERS,
     DEFAULT_OLLAMA_URL,
     DOMAIN,
+    HISTORY_SIZE,
     MAX_AGE,
+    MAX_HISTORY_SIZE,
 )
 from .pinlock import hash_pin, valid_pin
 
@@ -159,6 +162,7 @@ class ParentControlOptionsFlow(OptionsFlow):
                 errors[CONF_PIN] = "invalid_pin"
             else:
                 self._options = user_input
+                self._options[CONF_HISTORY_SIZE] = int(user_input[CONF_HISTORY_SIZE])
                 self._options[CONF_PIN_HASH] = (
                     await self.hass.async_add_executor_job(hash_pin, pin)
                     if pin
@@ -173,6 +177,13 @@ class ParentControlOptionsFlow(OptionsFlow):
         # Empty keeps the PIN; an entry without one needs it now.
         fields[vol.Optional(CONF_PIN) if current.get(CONF_PIN_HASH) else vol.Required(CONF_PIN)] = (
             PIN_SELECTOR
+        )
+        fields[
+            vol.Required(CONF_HISTORY_SIZE, default=current.get(CONF_HISTORY_SIZE, HISTORY_SIZE))
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=5, max=MAX_HISTORY_SIZE, step=5, mode=selector.NumberSelectorMode.BOX
+            )
         )
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
 

@@ -13,7 +13,7 @@ Home-Assistant-Integration, die laufende YouTube-Videos mit einem lokalen Ollama
 - Dashboard-Karte mit Geräteliste, PIN-Feld, Einstellungen, Kanallisten und Verlauf
 - Freigegebene und gesperrte Kanäle, global und pro Gerät, optional mit Mindestalter
 - Editierbare Prompts für Alterseinstufung und pädagogische Bewertung
-- Schauzeit pro Gerät, die letzten 20 Videos pro Gerät und tägliche Videostatistik
+- Schauzeit pro Gerät, die letzten Videos pro Gerät (standardmäßig 20, einstellbar) und tägliche Videostatistik
 - Warnungen, wenn Ollama oder die YouTube-Abfrage nicht mehr funktionieren
 - Läuft auf jeder Home-Assistant-Installation, die HACS unterstützt
 
@@ -37,7 +37,7 @@ Für alle Geräte gelten:
 - **Standardalter:** gilt, solange ein Gerät kein eigenes Alter hat.
 - **Prüfung:** Schalter, der die Prüfung für alle Geräte abschaltet.
 - **Videos, Genehmigt, Pädagogisch wertvoll und Geskippt heute:** zählen jedes Video einmal pro Tag. Das Attribut `gesamt` enthält den Wert seit der Installation.
-- **Optionen der Integration:** Modell, Geräteauswahl, PIN, eigenes Alter pro Gerät und die editierbaren Prompts. Nach einer Prompt-Änderung werden Videos neu geprüft. Nur Admins können sie öffnen.
+- **Optionen der Integration:** Modell, Geräteauswahl, PIN, gespeicherte Videos pro Gerät (5 bis 100, standardmäßig 20), eigenes Alter pro Gerät und die editierbaren Prompts. Nach einer Prompt-Änderung werden Videos neu geprüft. Nur Admins können sie öffnen.
 - **Einstellungen:** Schloss, das die Einstellungen schützt, siehe [PIN-Schloss](#pin-schloss).
 - **Ollama und YouTube-Abfrage:** zeigen, ob beide Dienste funktionieren. Nach 10 Minuten Ausfall zeigt Home Assistant eine Warnung unter **Einstellungen → Reparaturen**.
 
@@ -52,7 +52,7 @@ Jedes überwachte Gerät erscheint als eigenes Gerät unter ParentControl. Dort 
 - **YouTube-Prüfung:** zeigt Status, Titel, Mindestalter, Bewertungen und Begründungen.
 - **Alter:** das Alter dieses Geräts. Es zeigt das Standardalter, bis du es änderst.
 - **Schauzeit heute:** zählt die Minuten, in denen das Gerät abspielt, mit jeder App.
-- **Letzte Videos:** der neueste Titel als Zustand, die letzten 20 Videos im Attribut `videos` mit Uhrzeit, Kanal, Entscheidung, Begründungen und Kennzeichen für pädagogischen Wert, Schimpfwörter und Shorts. Jedes gesperrte Video hat einen `sperrtext`, der den Auslöser nennt. Bei Schimpfwörtern stehen dort die gefundenen Wörter, zusätzlich in `schimpfwoerter_liste`.
+- **Letzte Videos:** der neueste Titel als Zustand, die letzten Videos im Attribut `videos` mit Uhrzeit, Kanal, Entscheidung, Begründungen und Kennzeichen für pädagogischen Wert, Schimpfwörter und Shorts. Jedes gesperrte Video hat einen `sperrtext`, der den Auslöser nennt. Bei Schimpfwörtern stehen dort die gefundenen Wörter, zusätzlich in `schimpfwoerter_liste`.
 
 ## PIN-Schloss
 
@@ -77,10 +77,21 @@ type: custom:parentcontrol-card
 Ohne PIN zeigt die Karte nur die Geräteliste: Status, Alter, Schauzeit, den laufenden Titel und Symbole für pädagogisch wertvolle Videos und Schimpfwörter. Ein Tipp auf ein Gerät, auf **Verlauf** oder **Allgemein** fragt zuerst nach dem PIN. Danach siehst du:
 
 - **Gerät:** das laufende Video mit Begründungen, das Alter, alle Schalter, die Kanallisten dieses Geräts und seine letzten Videos
-- **Verlauf:** die letzten Videos aller Geräte, jeweils mit Knöpfen, um den Kanal freizugeben oder zu sperren
+- **Verlauf:** die letzten Videos aller Geräte, jeweils mit Knöpfen, um den Kanal freizugeben oder zu sperren. Bei jedem gesperrten Eintrag steht der Sperrgrund in Rot; ein Tipp auf den Eintrag zeigt die Einstufung des Modells. **Mehr anzeigen** lädt weitere Einträge.
 - **Allgemein:** den Schalter „Prüfung“, das Standardalter, die Listen für alle Geräte, die Statistik von heute und den Zustand von Ollama und der YouTube-Abfrage
 
-Schließt das Schloss wieder, springt die Karte zur Geräteliste zurück. Admins sehen alles ohne PIN. Optional sind `title` und `entity`, die Schloss-Entität, falls sie nicht automatisch gefunden wird.
+Schließt das Schloss wieder, springt die Karte zur Geräteliste zurück. Admins sehen alles ohne PIN.
+
+Die Karte hat einen visuellen Editor mit diesen Einstellungen:
+
+| Option | Bedeutung |
+|---|---|
+| `title` | Titel der Karte |
+| `entity` | Schloss-Entität, falls sie nicht automatisch gefunden wird |
+| `show_valuable`, `show_profanity`, `show_shorts` | Symbole für pädagogisch wertvoll, Schimpfwörter und Shorts, standardmäßig an |
+| `show_age`, `show_watch_time` | Alter und Schauzeit in der Geräteliste, standardmäßig an |
+| `history_limit` | Einträge im Verlauf vor **Mehr anzeigen**, standardmäßig 10 |
+| `names` | Anzeigenamen pro Gerät, zugeordnet über seinen Statussensor |
 
 ## Kanallisten
 

@@ -36,7 +36,8 @@
         "data": {
           "model": "Model",
           "players": "Monitored media players",
-          "pin": "New PIN (leave empty to keep it)"
+          "pin": "New PIN (leave empty to keep it)",
+          "history_size": "Stored videos per device"
         }
       },
       "ages": {

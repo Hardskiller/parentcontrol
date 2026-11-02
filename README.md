@@ -13,7 +13,7 @@ Home Assistant integration that estimates a minimum age for running YouTube vide
 - Dashboard card with device list, PIN pad, settings, channel lists, and history
 - Allowed and blocked channels, globally and per device, with an optional minimum age
 - Editable prompts for the age rating and the educational rating
-- Watch time per device, the latest 20 videos per device, and daily video statistics
+- Watch time per device, the latest videos per device (20 by default, adjustable), and daily video statistics
 - Warnings when Ollama or the YouTube lookup stop working
 - Runs on any Home Assistant installation that supports HACS
 
@@ -37,7 +37,7 @@ These apply to all devices:
 - **Default age:** used by every device without an age of its own.
 - **Check:** switch that turns the check off for all devices.
 - **Videos, Approved, Educational, and Skipped today:** count each video once per day. The `gesamt` attribute holds the count since installation.
-- **Integration options:** model, device selection, PIN, age per device, and the editable prompts. After a prompt change, videos are checked again. Only admins can open them.
+- **Integration options:** model, device selection, PIN, stored videos per device (5 to 100, 20 by default), age per device, and the editable prompts. After a prompt change, videos are checked again. Only admins can open them.
 - **Settings:** lock that guards the settings, see [PIN lock](#pin-lock).
 - **Ollama and YouTube lookup:** show whether both services work. After 10 minutes of failure, Home Assistant shows a warning under **Settings → Repairs**.
 
@@ -52,7 +52,7 @@ Each monitored player appears as its own device under ParentControl, with these 
 - **YouTube check:** shows status, title, minimum age, ratings, and reasons.
 - **Age:** the age of this device. It shows the default age until you change it.
 - **Watch time today:** counts the minutes the device is playing, in any app.
-- **Latest videos:** the newest title as state, the latest 20 videos in the `videos` attribute with time, channel, decision, reasons, and markers for educational value, swear words, and Shorts. Every blocked video has a `sperrtext` that names the trigger. For swear words it lists the words found, in `schimpfwoerter_liste` as well.
+- **Latest videos:** the newest title as state, the latest videos in the `videos` attribute with time, channel, decision, reasons, and markers for educational value, swear words, and Shorts. Every blocked video has a `sperrtext` that names the trigger. For swear words it lists the words found, in `schimpfwoerter_liste` as well.
 
 ## PIN lock
 
@@ -77,10 +77,21 @@ type: custom:parentcontrol-card
 Without the PIN, the card only shows the device list: status, age, watch time, the running title, and markers for educational videos and swear words. Tapping a device, **History**, or **General** asks for the PIN first. Then you see:
 
 - **Device:** the current video with its reasons, the age, all switches, the channel lists of this device, and its latest videos
-- **History:** the latest videos of all devices, each with buttons to allow or block its channel
+- **History:** the latest videos of all devices, each with buttons to allow or block its channel. Every blocked entry shows its block reason in red; tap an entry to see the model's rating. **Show more** loads further entries.
 - **General:** the check switch, the default age, the lists for all devices, today's statistics, and the state of Ollama and the YouTube lookup
 
-When the lock closes again, the card returns to the device list. Admins see everything without a PIN. Optional settings are `title` and `entity`, the lock entity, if it can't be found automatically.
+When the lock closes again, the card returns to the device list. Admins see everything without a PIN.
+
+The card has a visual editor with these settings:
+
+| Option | Meaning |
+|---|---|
+| `title` | Card title |
+| `entity` | Lock entity, if it can't be found automatically |
+| `show_valuable`, `show_profanity`, `show_shorts` | Markers for educational videos, swear words, and Shorts, on by default |
+| `show_age`, `show_watch_time` | Age and watch time in the device list, on by default |
+| `history_limit` | History entries before **Show more**, 10 by default |
+| `names` | Display names per device, keyed by its status sensor |
 
 ## Channel lists
 

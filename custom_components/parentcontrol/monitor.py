@@ -45,6 +45,7 @@ from .const import (
     CONF_DEVICE_AGES,
     CONF_DEVICE_ALLOWED,
     CONF_DEVICE_BLOCKED,
+    CONF_HISTORY_SIZE,
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
@@ -184,6 +185,7 @@ class Monitor:
         self._last_tick = time.monotonic()
         self._shorts: dict[str, bool] = {}
         self._history: dict[str, list[dict]] = {}
+        self._history_size = int(entry.options.get(CONF_HISTORY_SIZE, HISTORY_SIZE))
         self.health: dict[str, bool | None] = dict.fromkeys(HEALTH)
         self._down_since: dict[str, float] = {}
         self._last_health_check = -HEALTH_INTERVAL_SECONDS
@@ -198,7 +200,11 @@ class Monitor:
         self._events = data.get("events", [])
         self._totals |= data.get("totals", {})
         self._shorts = data.get("shorts", {})
-        self._history = data.get("history", {})
+        # A smaller size in the options also shortens the stored lists.
+        self._history = {
+            player: videos[: self._history_size]
+            for player, videos in data.get("history", {}).items()
+        }
         if data.get("day") == self._day:
             self._seen = data.get("seen", [])
             self._today |= data.get("today", {})
@@ -528,7 +534,7 @@ class Monitor:
             history[0] = {**entry, "zeit": history[0]["zeit"]}
         else:
             history.insert(0, entry)
-            del history[HISTORY_SIZE:]
+            del history[self._history_size :]
         self._save()
 
     def _may_start(self, key: str) -> bool:

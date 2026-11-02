@@ -36,7 +36,8 @@
         "data": {
           "model": "Modell",
           "players": "Überwachte Media Player",
-          "pin": "Neuer PIN (leer lassen, um ihn zu behalten)"
+          "pin": "Neuer PIN (leer lassen, um ihn zu behalten)",
+          "history_size": "Gespeicherte Videos pro Gerät"
         }
       },
       "ages": {
