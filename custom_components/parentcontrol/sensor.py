@@ -1,4 +1,4 @@
-"""Status, watch time and video statistics."""
+"""Status, watch time, latest videos and video statistics."""
 from __future__ import annotations
 
 from typing import Any
@@ -24,6 +24,7 @@ async def async_setup_entry(
         [
             *(StatusSensor(hass, entry, player) for player in players),
             *(WatchTimeSensor(hass, entry, player) for player in players),
+            *(HistorySensor(hass, entry, player) for player in players),
             *(StatSensor(entry, stat) for stat in STATS),
         ]
     )
@@ -79,6 +80,7 @@ class StatusSensor(ParentControlSensor):
             "alter": status.age,
             "sperrgrund": status.block_reason,
             "liste": status.list_state,
+            "short": status.short,
         }
         if status.rating:
             attributes |= {
@@ -113,6 +115,33 @@ class WatchTimeSensor(ParentControlSensor):
     def native_value(self) -> int:
         """Return the minutes."""
         return self._monitor.watch_minutes(self._player)
+
+
+class HistorySensor(ParentControlSensor):
+    """The latest videos of one player; the state is the newest title."""
+
+    _attr_translation_key = "history"
+    # Twenty entries with reasons would bloat the database on every change.
+    _unrecorded_attributes = frozenset({"videos"})
+
+    def __init__(
+        self, hass: HomeAssistant, entry: ParentControlConfigEntry, player: str
+    ) -> None:
+        super().__init__(entry)
+        self._player = player
+        self._attr_unique_id = f"{entry.entry_id}_{player}_history"
+        self._attr_device_info = player_device_info(hass, entry, player)
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the newest title, shortened to the state limit."""
+        history = self._monitor.history(self._player)
+        return history[0]["titel"][:255] if history else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the videos, newest first."""
+        return {"videos": self._monitor.history(self._player)}
 
 
 class StatSensor(ParentControlSensor):

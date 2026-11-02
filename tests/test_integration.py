@@ -5,17 +5,18 @@ from unittest.mock import patch
 import pytest
 from homeassistant import config_entries
 from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
     async_mock_service,
 )
 
-from custom_components.parentcontrol import engine
+from custom_components.parentcontrol import engine, pinlock
 from custom_components.parentcontrol.const import (
     CONF_AGE,
     CONF_AGE_PROMPT,
@@ -27,9 +28,12 @@ from custom_components.parentcontrol.const import (
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
+    CONF_PIN,
+    CONF_PIN_HASH,
     CONF_PLAYERS,
     DOMAIN,
     SETTING_BLOCK_PROFANITY,
+    SETTING_BLOCK_SHORTS,
     SETTING_REQUIRE_PEDAGOGY,
     SETTING_SEEK_TO_START,
     SETTING_SKIP_CHECKS,
@@ -43,6 +47,13 @@ SENSOR = "sensor.parentcontrol_tv_youtube_check"
 STRICT_SWITCH = "switch.parentcontrol_tv_strict_rating_block_without_subtitles_or_result"
 SWITCH = "switch.parentcontrol_check"
 NUMBER = "number.parentcontrol_default_age"
+TV_AGE = "number.parentcontrol_tv_age"
+LOCK = "lock.parentcontrol_settings"
+HISTORY = "sensor.parentcontrol_tv_latest_videos"
+SHORTS_SWITCH = "switch.parentcontrol_tv_block_shorts"
+OLLAMA = "binary_sensor.parentcontrol_ollama"
+PIN = "1234"
+PIN_HASH = pinlock.hash_pin(PIN)
 VIDEO = {
     "app_name": "YouTube",
     "media_title": "Titel",
@@ -62,23 +73,45 @@ def pauses(hass: HomeAssistant):
     return async_mock_service(hass, "media_player", "media_pause")
 
 
-async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), **options):
+class Patches:
+    """Stops the engine patches together."""
+
+    def __init__(self, *patchers):
+        self.patchers = patchers
+
+    def stop(self):
+        for patcher in self.patchers:
+            patcher.stop()
+
+
+@pytest.fixture(autouse=True)
+def quiet_health_check(aioclient_mock):
+    """Answer the periodic Ollama check."""
+    aioclient_mock.get("http://ollama.local/api/tags", json={"models": [{"name": "m"}]})
+
+
+async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, **options):
     entry = MockConfigEntry(
         domain=DOMAIN,
-        data={CONF_OLLAMA_URL: "http://ollama", CONF_AGE: age},
+        data={CONF_OLLAMA_URL: "http://ollama.local", CONF_AGE: age},
         options={
             CONF_MODEL: "m",
             CONF_PLAYERS: [TV, KIDS],
             CONF_DEVICE_AGES: device_ages or {},
+            CONF_PIN_HASH: PIN_HASH,
             **options,
         },
     )
     entry.add_to_hass(hass)
     rating = engine.Rating(min_age, "Grund", source, "id", valuable, "Lehrreich", profanity)
-    patcher = patch.object(
+    rate_patcher = patch.object(
         engine, "rate", side_effect=side_effect, return_value=rating
     )
-    mock = patcher.start()
+    meta = engine.Metadata(failed=True) if meta_failed else engine.Metadata("id", short=short)
+    meta_patcher = patch.object(engine, "fetch_metadata", return_value=meta)
+    mock = rate_patcher.start()
+    meta_patcher.start()
+    patcher = Patches(rate_patcher, meta_patcher)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     for setting in settings:
@@ -560,10 +593,17 @@ async def test_setup_flow_creates_entry(hass, aioclient_mock):
     assert result["step_id"] == "settings"
     with patch("custom_components.parentcontrol.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {CONF_MODEL: "m", CONF_PLAYERS: [TV], CONF_AGE: 8}
+            result["flow_id"], {CONF_MODEL: "m", CONF_PLAYERS: [TV], CONF_AGE: 8, CONF_PIN: "12a4"}
+        )
+        assert result["errors"] == {CONF_PIN: "invalid_pin"}
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_MODEL: "m", CONF_PLAYERS: [TV], CONF_AGE: 8, CONF_PIN: "4711"}
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_OLLAMA_URL: "http://ollama:11434", CONF_AGE: 8}
+    pin_hash = result["options"].pop(CONF_PIN_HASH)
+    assert "4711" not in pin_hash
+    assert pinlock.check_pin("4711", pin_hash)
     assert result["options"] == {CONF_MODEL: "m", CONF_PLAYERS: [TV]}
 
 
@@ -579,7 +619,6 @@ async def test_setup_flow_reports_unreachable_server(hass, aioclient_mock):
 
 
 async def test_options_flow_stores_device_age(hass, aioclient_mock):
-    aioclient_mock.get("http://ollama/api/tags", json={"models": [{"name": "m"}]})
     entry, _, patcher = await setup(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
@@ -615,5 +654,256 @@ async def test_options_flow_stores_device_age(hass, aioclient_mock):
     assert entry.options[CONF_DEVICE_BLOCKED] == {TV: "Nur TV", KIDS: ""}
     assert entry.options[CONF_AGE_PROMPT] == "Mein Prompt"
     assert entry.options[CONF_PEDAGOGY_PROMPT] == engine.DEFAULT_PEDAGOGY_PROMPT
+    assert entry.options[CONF_PIN_HASH] == PIN_HASH
     await hass.async_block_till_done()
+    patcher.stop()
+
+
+async def child_context(hass):
+    # The first user becomes the owner, who is always an admin.
+    await hass.auth.async_create_user("Eltern", group_ids=["system-admin"])
+    user = await hass.auth.async_create_user("Kind", group_ids=["system-users"])
+    return Context(user_id=user.id)
+
+
+async def unlock(hass, code=PIN):
+    await hass.services.async_call(
+        "lock", "unlock", {ATTR_ENTITY_ID: LOCK, "code": code}, blocking=True
+    )
+
+
+async def test_locked_integration_rejects_loosening_by_non_admins(hass, pauses):
+    _, _, patcher = await setup(hass)
+    context = await child_context(hass)
+    assert hass.states.get(LOCK).state == "locked"
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "switch", "turn_off", {ATTR_ENTITY_ID: SWITCH}, blocking=True, context=context
+        )
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "number", "set_value", {ATTR_ENTITY_ID: NUMBER, "value": 12}, blocking=True, context=context
+        )
+    assert hass.states.get(SWITCH).state == "on"
+    assert hass.states.get(NUMBER).state == "8"
+    patcher.stop()
+
+
+async def test_stricter_changes_need_no_pin(hass, pauses):
+    _, _, patcher = await setup(hass)
+    context = await child_context(hass)
+    await hass.services.async_call(
+        "number", "set_value", {ATTR_ENTITY_ID: NUMBER, "value": 6}, blocking=True, context=context
+    )
+    await hass.services.async_call(
+        DOMAIN, "block_channel", {"channel": "Neu"}, blocking=True, context=context
+    )
+    assert hass.states.get(NUMBER).state == "6"
+    patcher.stop()
+
+
+async def test_admins_and_automations_change_without_pin(hass, pauses, hass_admin_user):
+    _, _, patcher = await setup(hass)
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: SWITCH}, blocking=True,
+        context=Context(user_id=hass_admin_user.id),
+    )
+    assert hass.states.get(SWITCH).state == "off"
+    await hass.services.async_call("switch", "turn_on", {ATTR_ENTITY_ID: SWITCH}, blocking=True)
+    await hass.services.async_call("switch", "turn_off", {ATTR_ENTITY_ID: SWITCH}, blocking=True)
+    assert hass.states.get(SWITCH).state == "off"
+    patcher.stop()
+
+
+async def test_pin_opens_for_five_minutes_and_every_change_extends(hass, pauses, freezer):
+    _, _, patcher = await setup(hass)
+    context = await child_context(hass)
+    await unlock(hass)
+    assert hass.states.get(LOCK).state == "unlocked"
+    freezer.tick(240)
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: SWITCH}, blocking=True, context=context
+    )
+    freezer.tick(240)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(LOCK).state == "unlocked"
+    freezer.tick(70)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hass.states.get(LOCK).state == "locked"
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: STRICT_SWITCH}, blocking=True, context=context
+        )
+        await hass.services.async_call(
+            "switch", "turn_off", {ATTR_ENTITY_ID: STRICT_SWITCH}, blocking=True, context=context
+        )
+    patcher.stop()
+
+
+async def test_lock_button_closes_at_once(hass, pauses):
+    _, _, patcher = await setup(hass)
+    await unlock(hass)
+    await hass.services.async_call("lock", "lock", {ATTR_ENTITY_ID: LOCK}, blocking=True)
+    assert hass.states.get(LOCK).state == "locked"
+    patcher.stop()
+
+
+async def test_wrong_pins_block_entry_with_growing_wait(hass, pauses, freezer):
+    _, _, patcher = await setup(hass)
+    failures = []
+    hass.bus.async_listen("parentcontrol_pin_failed", failures.append)
+    for _ in range(5):
+        with pytest.raises(ServiceValidationError, match="Wrong PIN|wrong_pin|Falscher"):
+            await unlock(hass, "0000")
+    await hass.async_block_till_done()
+    assert len(failures) == 5
+    with pytest.raises(ServiceValidationError):
+        await unlock(hass)
+    freezer.tick(901)
+    for _ in range(5):
+        with pytest.raises(ServiceValidationError):
+            await unlock(hass, "0000")
+    freezer.tick(901)
+    with pytest.raises(ServiceValidationError):
+        await unlock(hass)
+    freezer.tick(900)
+    await unlock(hass)
+    assert hass.states.get(LOCK).state == "unlocked"
+    patcher.stop()
+
+
+async def test_entry_without_pin_stays_locked(hass, pauses):
+    _, _, patcher = await setup(hass, **{CONF_PIN_HASH: None})
+    with pytest.raises(ServiceValidationError):
+        await unlock(hass)
+    patcher.stop()
+
+
+async def test_lock_stays_open_when_a_list_change_reloads(hass, pauses):
+    _, _, patcher = await setup(hass)
+    context = await child_context(hass)
+    await unlock(hass)
+    await hass.services.async_call(
+        DOMAIN, "allow_channel", {"channel": "Neu"}, blocking=True, context=context
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(LOCK).state == "unlocked"
+    patcher.stop()
+
+
+async def test_removing_from_the_blocked_list_needs_the_pin(hass, pauses):
+    entry, _, patcher = await setup(hass, **{CONF_BLOCKED: "Kanal\nAnderer"})
+    context = await child_context(hass)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "remove_channel", {"list": "blocked", "channel": "Kanal"},
+            blocking=True, context=context,
+        )
+    await hass.services.async_call(
+        DOMAIN, "remove_channel", {"list": "allowed", "channel": "Die Maus"},
+        blocking=True, context=context,
+    )
+    await hass.async_block_till_done()
+    assert "Die Maus" not in entry.options[CONF_ALLOWED]
+    await unlock(hass)
+    await hass.services.async_call(
+        DOMAIN, "remove_channel", {"list": "blocked", "channel": "Kanal"},
+        blocking=True, context=context,
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_BLOCKED] == "Anderer"
+    patcher.stop()
+
+
+async def test_device_age_entity_sets_an_own_age(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=10)
+    context = await child_context(hass)
+    assert hass.states.get(TV_AGE).state == "8"
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "number", "set_value", {ATTR_ENTITY_ID: TV_AGE, "value": 12}, blocking=True, context=context
+        )
+    await hass.services.async_call(
+        "number", "set_value", {ATTR_ENTITY_ID: TV_AGE, "value": 7}, blocking=True, context=context
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_DEVICE_AGES] == {TV: 7}
+    assert hass.states.get(TV_AGE).state == "7"
+    patcher.stop()
+
+
+async def test_shorts_are_blocked_before_the_rating(hass, pauses):
+    _, mock, patcher = await setup(hass, min_age=4, short=True)
+    await play(hass)
+    assert len(pauses) == 1
+    state = hass.states.get(SENSOR)
+    assert state.attributes["sperrgrund"] == "short"
+    assert state.attributes["short"] is True
+    assert hass.states.get(SHORTS_SWITCH).state == "on"
+    patcher.stop()
+
+
+async def test_shorts_are_blocked_on_allowed_channels_without_the_model(hass, pauses):
+    _, mock, patcher = await setup(
+        hass, short=True, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: "Kanal; 0"}
+    )
+    await play(hass)
+    assert len(pauses) == 1
+    assert not mock.called
+    patcher.stop()
+
+
+async def test_shorts_play_when_the_switch_is_off(hass, pauses):
+    entry, _, patcher = await setup(hass, min_age=4, short=True)
+    entry.runtime_data.async_set_setting(TV, SETTING_BLOCK_SHORTS, False)
+    await play(hass)
+    assert not pauses
+    patcher.stop()
+
+
+async def test_long_videos_skip_the_shorts_lookup(hass, pauses):
+    _, _, patcher = await setup(
+        hass, short=True, settings=[SETTING_SKIP_CHECKS], **{CONF_ALLOWED: "Kanal; 0"}
+    )
+    with patch.object(engine, "fetch_metadata") as lookup:
+        await play(hass, attributes={**VIDEO, "media_duration": 600.0})
+    assert not lookup.called
+    assert not pauses
+    patcher.stop()
+
+
+async def test_history_keeps_the_latest_videos(hass, pauses):
+    _, _, patcher = await setup(hass, min_age=4, valuable=True)
+    await play(hass)
+    await play(hass, attributes={**VIDEO, "media_title": "Zweites"})
+    state = hass.states.get(HISTORY)
+    assert state.state == "Zweites"
+    videos = state.attributes["videos"]
+    assert [video["titel"] for video in videos] == ["Zweites", "Titel"]
+    assert videos[1]["status"] == "frei"
+    assert videos[1]["paedagogisch_wertvoll"] is True
+    patcher.stop()
+
+
+async def test_ollama_failure_turns_the_sensor_off_and_raises_a_repair(hass, pauses, freezer, aioclient_mock):
+    aioclient_mock.clear_requests()
+    aioclient_mock.get("http://ollama.local/api/tags", exc=TimeoutError)
+    _, _, patcher = await setup(hass, side_effect=OSError("weg"))
+    await play(hass)
+    assert hass.states.get(OLLAMA).state == "off"
+    issues = ir.async_get(hass)
+    assert issues.async_get_issue(DOMAIN, "ollama_down") is None
+    freezer.tick(601)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert issues.async_get_issue(DOMAIN, "ollama_down") is not None
+    patcher.stop()
+
+
+async def test_failed_lookup_turns_the_yt_dlp_sensor_off(hass, pauses):
+    _, _, patcher = await setup(hass, meta_failed=True)
+    await play(hass)
+    assert hass.states.get("binary_sensor.parentcontrol_youtube_lookup").state == "off"
     patcher.stop()

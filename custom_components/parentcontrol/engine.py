@@ -96,6 +96,8 @@ class Metadata:
     description: str = ""
     age_limit: int = 0
     transcript: str = ""
+    short: bool = False
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -206,11 +208,12 @@ def fetch_metadata(video: Video) -> Metadata:
         info = _extract(f"https://www.youtube.com/watch?v={video_id}")
     except Exception as err:  # noqa: BLE001 - yt-dlp raises many unrelated types
         _LOGGER.warning("yt-dlp fehlgeschlagen: %s", err)
-        return Metadata()
+        return Metadata(failed=True)
     meta = {
         "video_id": video_id,
         "description": info.get("description") or "",
         "age_limit": info.get("age_limit") or 0,
+        "short": info.get("media_type") == "short",
     }
     url = pick_caption(info)
     if not url:
@@ -280,9 +283,11 @@ def ask_ollama(url: str, model: str, system_prompt: str, prompt: str) -> str:
         return json.load(response)["message"]["content"]
 
 
-def rate(video: Video, ollama_url: str, model: str, system_prompt: str) -> Rating:
+def rate(
+    video: Video, ollama_url: str, model: str, system_prompt: str, meta: Metadata | None = None
+) -> Rating:
     """Rate a video. Raises on Ollama errors; the caller reports it as unchecked."""
-    meta = fetch_metadata(video)
+    meta = meta or fetch_metadata(video)
     if meta.transcript:
         source = SOURCE_SUBTITLES
     elif meta.description:

@@ -10,18 +10,20 @@
       },
       "settings": {
         "title": "Prüfung einrichten",
-        "description": "Die Einschätzung stammt von einem Sprachmodell und ist keine offizielle Altersfreigabe.",
+        "description": "Die Einschätzung stammt von einem Sprachmodell und ist keine offizielle Altersfreigabe. Mit dem PIN öffnen Erwachsene am Dashboard die Einstellungen; ohne PIN können Benutzer ohne Adminrechte den Schutz nicht lockern.",
         "data": {
           "model": "Modell",
           "players": "Überwachte Media Player",
-          "age": "Standardalter"
+          "age": "Standardalter",
+          "pin": "PIN (4 bis 8 Ziffern)"
         }
       }
     },
     "error": {
       "cannot_connect": "Der Ollama-Server ist nicht erreichbar.",
       "no_models": "Auf dem Ollama-Server ist kein Modell installiert.",
-      "no_players": "Wähle mindestens einen Media Player."
+      "no_players": "Wähle mindestens einen Media Player.",
+      "invalid_pin": "Der PIN muss aus 4 bis 8 Ziffern bestehen."
     },
     "abort": {
       "single_instance_allowed": "ParentControl ist bereits eingerichtet."
@@ -33,7 +35,8 @@
         "title": "Prüfung ändern",
         "data": {
           "model": "Modell",
-          "players": "Überwachte Media Player"
+          "players": "Überwachte Media Player",
+          "pin": "Neuer PIN (leer lassen, um ihn zu behalten)"
         }
       },
       "ages": {
@@ -67,13 +70,17 @@
     },
     "error": {
       "no_players": "Wähle mindestens einen Media Player.",
-      "invalid_age": "In der Freigabe steht ein ungültiges Alter. Erlaubt ist 0 bis 18."
+      "invalid_age": "In der Freigabe steht ein ungültiges Alter. Erlaubt ist 0 bis 18.",
+      "invalid_pin": "Der PIN muss aus 4 bis 8 Ziffern bestehen."
     }
   },
   "entity": {
     "number": {
       "age": {
         "name": "Standardalter"
+      },
+      "device_age": {
+        "name": "Alter"
       }
     },
     "switch": {
@@ -94,6 +101,9 @@
       },
       "skip_checks": {
         "name": "Freigegebene Kanäle überspringen alle Prüfungen"
+      },
+      "block_shorts": {
+        "name": "Shorts sperren"
       }
     },
     "sensor": {
@@ -123,6 +133,22 @@
       },
       "watch_time": {
         "name": "Schauzeit heute"
+      },
+      "history": {
+        "name": "Letzte Videos"
+      }
+    },
+    "lock": {
+      "settings": {
+        "name": "Einstellungen"
+      }
+    },
+    "binary_sensor": {
+      "ollama": {
+        "name": "Ollama"
+      },
+      "yt_dlp": {
+        "name": "YouTube-Abfrage"
       }
     }
   },
@@ -166,6 +192,52 @@
           "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
         }
       }
+    },
+    "remove_channel": {
+      "name": "Kanal entfernen",
+      "description": "Entfernt einen Kanal aus der Freigabe- oder Sperrliste. Aus der Sperrliste entfernen braucht den PIN.",
+      "fields": {
+        "list": {
+          "name": "Liste",
+          "description": "allowed für die Freigabeliste, blocked für die Sperrliste."
+        },
+        "channel": {
+          "name": "Kanal",
+          "description": "Name des Kanals. Leer nimmt den laufenden Kanal des Media Players."
+        },
+        "player": {
+          "name": "Media Player",
+          "description": "Liefert den laufenden Kanal und das Gerät für die Geräteliste."
+        },
+        "only_this_device": {
+          "name": "Nur dieses Gerät",
+          "description": "Trägt den Kanal in die Geräteliste statt in die globale Liste ein."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "locked": {
+      "message": "ParentControl ist gesperrt. Gib zuerst am Schloss „Einstellungen“ den PIN ein."
+    },
+    "wrong_pin": {
+      "message": "Falscher PIN."
+    },
+    "pin_blocked": {
+      "message": "Zu viele falsche Versuche. Der PIN ist noch {minutes} Minuten gesperrt."
+    },
+    "no_pin": {
+      "message": "Es ist kein PIN festgelegt. Ein Admin legt ihn in den Optionen der Integration fest."
+    }
+  },
+  "issues": {
+    "ollama_down": {
+      "title": "Ollama ist nicht erreichbar",
+      "description": "ParentControl erreicht den Ollama-Server seit mindestens 10 Minuten nicht. Videos werden nicht eingestuft; ohne strenge Bewertung laufen sie weiter."
+    },
+    "yt_dlp_down": {
+      "title": "YouTube-Abfrage schlägt fehl",
+      "description": "yt-dlp findet seit mindestens 10 Minuten keine Videodaten. Vielleicht hat YouTube etwas geändert; ein Update von ParentControl oder yt-dlp kann helfen."
     }
   }
 }

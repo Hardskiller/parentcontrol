@@ -13,6 +13,8 @@ CONF_ALLOWED = "allowed_channels"
 CONF_BLOCKED = "blocked_channels"
 CONF_DEVICE_ALLOWED = "device_allowed_channels"
 CONF_DEVICE_BLOCKED = "device_blocked_channels"
+CONF_PIN = "pin"
+CONF_PIN_HASH = "pin_hash"
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 MAX_AGE = 18
@@ -20,6 +22,14 @@ RETRY_SECONDS = 600
 PAUSE_DEBOUNCE_SECONDS = 2
 MAX_EVENTS = 500
 STORAGE_VERSION = 1
+PIN_PATTERN = r"^\d{4,8}$"
+UNLOCK_SECONDS = 300
+PIN_ATTEMPTS = 5
+PIN_LOCKOUT_SECONDS = 900
+HISTORY_SIZE = 20
+SHORT_MAX_SECONDS = 180
+HEALTH_INTERVAL_SECONDS = 300
+REPAIR_AFTER_SECONDS = 600
 
 STATUS_BLOCKED = "blockiert"
 STATUS_CHECKING = "wird_geprueft"
@@ -43,13 +53,18 @@ SETTING_REQUIRE_PEDAGOGY = "require_pedagogy"
 SETTING_BLOCK_PROFANITY = "block_profanity"
 SETTING_STRICT = "strict"
 SETTING_SKIP_CHECKS = "skip_checks"
+SETTING_BLOCK_SHORTS = "block_shorts"
 SETTINGS = [
     SETTING_SEEK_TO_START,
     SETTING_REQUIRE_PEDAGOGY,
     SETTING_BLOCK_PROFANITY,
     SETTING_STRICT,
     SETTING_SKIP_CHECKS,
+    SETTING_BLOCK_SHORTS,
 ]
+SETTING_DEFAULTS = {SETTING_BLOCK_SHORTS: True}
+# The value that weakens the protection; changing to it needs the PIN.
+LOOSENING_VALUES = {SETTING_SKIP_CHECKS: True}
 
 BLOCK_AGE = "alter"
 BLOCK_PEDAGOGY = "paedagogik"
@@ -57,6 +72,7 @@ BLOCK_PROFANITY = "schimpfwoerter"
 BLOCK_NO_SUBTITLES = "keine_untertitel"
 BLOCK_UNCHECKED = "nicht_geprueft"
 BLOCK_CHANNEL = "kanal_gesperrt"
+BLOCK_SHORT = "short"
 
 LIST_ALLOWED = "freigegeben"
 LIST_BLOCKED = "gesperrt"
@@ -69,5 +85,11 @@ STATS = [STAT_VIDEOS, STAT_APPROVED, STAT_VALUABLE, STAT_SKIPPED]
 
 SERVICE_ALLOW_CHANNEL = "allow_channel"
 SERVICE_BLOCK_CHANNEL = "block_channel"
+SERVICE_REMOVE_CHANNEL = "remove_channel"
 
 EVENT_PAUSED = f"{DOMAIN}_paused"
+EVENT_PIN_FAILED = f"{DOMAIN}_pin_failed"
+
+HEALTH_OLLAMA = "ollama"
+HEALTH_YTDLP = "yt_dlp"
+HEALTH = [HEALTH_OLLAMA, HEALTH_YTDLP]

@@ -19,6 +19,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
     async_track_state_change_event,
@@ -34,6 +36,7 @@ from .const import (
     BLOCK_NO_SUBTITLES,
     BLOCK_PEDAGOGY,
     BLOCK_PROFANITY,
+    BLOCK_SHORT,
     BLOCK_UNCHECKED,
     CONF_AGE,
     CONF_AGE_PROMPT,
@@ -48,16 +51,26 @@ from .const import (
     CONF_PLAYERS,
     DOMAIN,
     EVENT_PAUSED,
+    HEALTH,
+    HEALTH_INTERVAL_SECONDS,
+    HEALTH_OLLAMA,
+    HEALTH_YTDLP,
+    HISTORY_SIZE,
     LIST_ALLOWED,
     LIST_BLOCKED,
+    LOOSENING_VALUES,
     MAX_EVENTS,
     PAUSE_DEBOUNCE_SECONDS,
+    REPAIR_AFTER_SECONDS,
     RETRY_SECONDS,
     SETTING_BLOCK_PROFANITY,
+    SETTING_BLOCK_SHORTS,
     SETTING_REQUIRE_PEDAGOGY,
     SETTING_SEEK_TO_START,
     SETTING_SKIP_CHECKS,
     SETTING_STRICT,
+    SETTING_DEFAULTS,
+    SHORT_MAX_SECONDS,
     STAT_APPROVED,
     STAT_SKIPPED,
     STAT_VALUABLE,
@@ -72,6 +85,7 @@ from .const import (
     STATUS_UNCHECKED,
     STORAGE_VERSION,
 )
+from .pinlock import PinLock
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,6 +93,7 @@ INACTIVE_STATES = {STATE_OFF, STATE_STANDBY, STATE_UNAVAILABLE, STATE_UNKNOWN}
 SAVE_DELAY_SECONDS = 5
 ENFORCE_INTERVAL = timedelta(seconds=3)
 MAX_TICK_SECONDS = 30
+HEALTH_TIMEOUT = 10
 
 
 @dataclass(frozen=True)
@@ -92,14 +107,16 @@ class PlayerStatus:
     rating: engine.Rating | None = None
     block_reason: str | None = None
     list_state: str | None = None
+    short: bool = False
 
 
 class Monitor:
     """Rates what the configured players show and enforces the result."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, lock: PinLock) -> None:
         self.hass = hass
         self.entry = entry
+        self.lock = lock
         self.players: list[str] = entry.options[CONF_PLAYERS]
         self.signal = f"{DOMAIN}_{entry.entry_id}"
         self.age: int = entry.data[CONF_AGE]
@@ -139,6 +156,11 @@ class Monitor:
         self._totals = dict.fromkeys(STATS, 0)
         self._watch_seconds: dict[str, float] = {}
         self._last_tick = time.monotonic()
+        self._shorts: dict[str, bool] = {}
+        self._history: dict[str, list[dict]] = {}
+        self.health: dict[str, bool | None] = dict.fromkeys(HEALTH)
+        self._down_since: dict[str, float] = {}
+        self._last_health_check = -HEALTH_INTERVAL_SECONDS
 
     async def async_load(self) -> None:
         """Restore age, switch, ratings, statistics and the protocol."""
@@ -149,6 +171,8 @@ class Monitor:
         self._ratings = data.get("ratings", {})
         self._events = data.get("events", [])
         self._totals |= data.get("totals", {})
+        self._shorts = data.get("shorts", {})
+        self._history = data.get("history", {})
         if data.get("day") == self._day:
             self._seen = data.get("seen", [])
             self._today |= data.get("today", {})
@@ -173,8 +197,21 @@ class Monitor:
         self._unsubscribe = []
 
     def setting(self, player: str, setting: str) -> bool:
-        """Return a checkbox of a player; all start switched off."""
-        return self._settings.get(player, {}).get(setting, False)
+        """Return a checkbox of a player; most start switched off."""
+        return self._settings.get(player, {}).get(setting, SETTING_DEFAULTS.get(setting, False))
+
+    @staticmethod
+    def loosens_setting(setting: str, value: bool) -> bool:
+        """Return whether a checkbox change weakens the protection."""
+        return value == LOOSENING_VALUES.get(setting, False)
+
+    def device_age(self, player: str) -> int:
+        """Return the age that applies to a player."""
+        return self._device_ages.get(player, self.age)
+
+    def history(self, player: str) -> list[dict]:
+        """Return the latest videos of a player, newest first."""
+        return self._history.get(player, [])
 
     @callback
     def async_set_setting(self, player: str, setting: str, value: bool) -> None:
@@ -182,6 +219,31 @@ class Monitor:
         self._settings.setdefault(player, {})[setting] = value
         self._save()
         self._evaluate(player)
+
+    @callback
+    def async_set_device_age(self, player: str, age: int) -> None:
+        """Give a player its own age; reloads the entry."""
+        ages = {**self._device_ages, player: age}
+        self.hass.config_entries.async_update_entry(
+            self.entry, options={**self.entry.options, CONF_DEVICE_AGES: ages}
+        )
+
+    @callback
+    def async_remove_channel(self, allow: bool, channel: str, player: str | None) -> None:
+        """Remove a channel from the allowed or the blocked list."""
+        options = {**self.entry.options}
+        if player:
+            key = CONF_DEVICE_ALLOWED if allow else CONF_DEVICE_BLOCKED
+            lists = dict(options.get(key, {}))
+            lists[player] = engine.remove_channel(lists.get(player, ""), channel)
+            options[key] = lists
+        elif allow:
+            options[CONF_ALLOWED] = engine.remove_channel(
+                options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS), channel
+            )
+        else:
+            options[CONF_BLOCKED] = engine.remove_channel(options.get(CONF_BLOCKED, ""), channel)
+        self.hass.config_entries.async_update_entry(self.entry, options=options)
 
     @callback
     def async_list_channel(
@@ -257,7 +319,51 @@ class Monitor:
     def _interval(self, _now: datetime) -> None:
         self._roll_over_day()
         self._count_watch_time()
+        self._check_health()
         self.async_evaluate_all()
+
+    @callback
+    def _check_health(self) -> None:
+        now = time.monotonic()
+        if now - self._last_health_check >= HEALTH_INTERVAL_SECONDS:
+            self._last_health_check = now
+            self.entry.async_create_background_task(
+                self.hass, self._async_check_ollama(), f"{DOMAIN} ollama check"
+            )
+        for name, since in self._down_since.items():
+            if now - since >= REPAIR_AFTER_SECONDS:
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    f"{name}_down",
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key=f"{name}_down",
+                )
+
+    async def _async_check_ollama(self) -> None:
+        url = f"{self.entry.data[CONF_OLLAMA_URL].rstrip('/')}/api/tags"
+        try:
+            async with async_get_clientsession(self.hass).get(
+                url, timeout=HEALTH_TIMEOUT
+            ) as response:
+                response.raise_for_status()
+        except (OSError, TimeoutError, ValueError) as err:
+            _LOGGER.debug("Ollama nicht erreichbar: %s", err)
+            self._set_health(HEALTH_OLLAMA, False)
+        else:
+            self._set_health(HEALTH_OLLAMA, True)
+
+    @callback
+    def _set_health(self, name: str, healthy: bool) -> None:
+        if healthy:
+            self._down_since.pop(name, None)
+            ir.async_delete_issue(self.hass, DOMAIN, f"{name}_down")
+        else:
+            self._down_since.setdefault(name, time.monotonic())
+        if self.health[name] != healthy:
+            self.health[name] = healthy
+            async_dispatcher_send(self.hass, self.signal)
 
     @callback
     def _roll_over_day(self) -> None:
@@ -303,6 +409,10 @@ class Monitor:
         self._save()
         async_dispatcher_send(self.hass, self.signal)
 
+    async def async_save_now(self) -> None:
+        """Write pending changes at once."""
+        await self._store.async_save(self._data())
+
     @callback
     def _save(self) -> None:
         self._store.async_delay_save(self._data, SAVE_DELAY_SECONDS)
@@ -320,6 +430,8 @@ class Monitor:
             "today": self._today,
             "totals": self._totals,
             "watch_seconds": self._watch_seconds,
+            "shorts": self._shorts,
+            "history": self._history,
         }
 
     @callback
@@ -341,37 +453,101 @@ class Monitor:
     def _publish(self, player: str, status: PlayerStatus) -> None:
         if self._statuses.get(player) != status:
             self._statuses[player] = status
+            self._record(player, status)
             async_dispatcher_send(self.hass, self.signal)
 
     @callback
-    def _ensure_rated(self, key: str, video: engine.Video) -> None:
-        """Start a check unless there is a rating or a recent failure."""
-        if key in self._ratings or key in self._pending:
+    def _record(self, player: str, status: PlayerStatus) -> None:
+        """Keep the latest videos; a new result updates the newest entry."""
+        if not status.title:
             return
+        history = self._history.setdefault(player, [])
+        rating = status.rating
+        entry = {
+            "zeit": dt_util.now().isoformat(timespec="seconds"),
+            "titel": status.title,
+            "kanal": status.channel,
+            "status": status.status,
+            "sperrgrund": status.block_reason,
+            "mindestalter": rating.min_age if rating else None,
+            "grund": rating.reason if rating else None,
+            "paedagogisch_wertvoll": rating.valuable if rating else None,
+            "schimpfwoerter": rating.profanity if rating else None,
+            "short": status.short,
+        }
+        if history and (history[0]["titel"], history[0]["kanal"]) == (status.title, status.channel):
+            history[0] = {**entry, "zeit": history[0]["zeit"]}
+        else:
+            history.insert(0, entry)
+            del history[HISTORY_SIZE:]
+        self._save()
+
+    def _may_start(self, key: str) -> bool:
+        if key in self._pending:
+            return False
         failed_at = self._failed.get(key)
-        if failed_at and time.monotonic() - failed_at < RETRY_SECONDS:
+        return not failed_at or time.monotonic() - failed_at >= RETRY_SECONDS
+
+    @callback
+    def _ensure_rated(self, key: str, video_key: str, video: engine.Video) -> None:
+        """Start a check unless there is a rating or a recent failure."""
+        if key in self._ratings or not self._may_start(key):
             return
         self._pending.add(key)
         self.entry.async_create_background_task(
-            self.hass, self._async_rate(key, video), f"{DOMAIN} rate {video.title}"
+            self.hass, self._async_rate(key, video_key, video), f"{DOMAIN} rate {video.title}"
         )
 
-    async def _async_rate(self, key: str, video: engine.Video) -> None:
+    @callback
+    def _ensure_format(self, video_key: str, video: engine.Video) -> None:
+        """Only ask YouTube whether a video is a Short."""
+        if video_key in self._shorts or not self._may_start(video_key):
+            return
+        self._pending.add(video_key)
+        self.entry.async_create_background_task(
+            self.hass, self._async_lookup(video_key, video), f"{DOMAIN} lookup {video.title}"
+        )
+
+    async def _async_fetch(self, video_key: str, video: engine.Video) -> engine.Metadata:
+        """Look the video up and pause a Short before the model answers."""
+        meta = await self.hass.async_add_executor_job(engine.fetch_metadata, video)
+        self._set_health(HEALTH_YTDLP, not meta.failed)
+        if meta.failed:
+            self._failed[video_key] = time.monotonic()
+        elif meta.video_id:
+            self._shorts[video_key] = meta.short
+            self._save()
+        self.async_evaluate_all()
+        return meta
+
+    async def _async_lookup(self, video_key: str, video: engine.Video) -> None:
         try:
             async with self._semaphore:
+                await self._async_fetch(video_key, video)
+        finally:
+            self._pending.discard(video_key)
+        self.async_evaluate_all()
+
+    async def _async_rate(self, key: str, video_key: str, video: engine.Video) -> None:
+        try:
+            async with self._semaphore:
+                meta = await self._async_fetch(video_key, video)
                 rating = await self.hass.async_add_executor_job(
                     engine.rate,
                     video,
                     self.entry.data[CONF_OLLAMA_URL],
                     self.entry.options[CONF_MODEL],
                     self._system_prompt,
+                    meta,
                 )
         except (OSError, ValueError, KeyError) as err:
             _LOGGER.warning("Einstufung fehlgeschlagen für %r: %s", video.title, err)
             self._failed[key] = time.monotonic()
+            self._set_health(HEALTH_OLLAMA, False)
             self._log_event("nicht_geprueft", video, None)
         else:
             self._failed.pop(key, None)
+            self._set_health(HEALTH_OLLAMA, True)
             self._ratings[key] = asdict(rating)
             self._log_event("eingestuft", video, self._ratings[key])
         finally:
@@ -451,12 +627,14 @@ class Monitor:
             self._publish(player, PlayerStatus(STATUS_NO_DATA))
             return
         channel = attributes.get("media_artist") or ""
-        age = self._device_ages.get(player, self.age)
+        age = self.device_age(player)
         if not self.enabled:
             self._publish(player, PlayerStatus(STATUS_DISABLED, title, channel, age))
             return
-        video = engine.Video(title, channel, attributes.get("media_duration"))
-        key = f"{title}\n{channel}\n{self._prompt_id}"
+        duration = attributes.get("media_duration")
+        video = engine.Video(title, channel, duration)
+        video_key = f"{title}\n{channel}"
+        key = f"{video_key}\n{self._prompt_id}"
         normalized_channel = engine.normalize(channel)
         if self._is_blocked_channel(player, normalized_channel):
             self._count_video(key, True, False)
@@ -476,7 +654,39 @@ class Monitor:
             return
         listed = self._is_allowed_channel(player, normalized_channel, age)
         list_state = LIST_ALLOWED if listed else None
-        if listed and self.setting(player, SETTING_SKIP_CHECKS):
+        # Shorts last three minutes at most and are blocked on every channel.
+        maybe_short = self.setting(player, SETTING_BLOCK_SHORTS) and not (
+            duration and duration > SHORT_MAX_SECONDS
+        )
+        if maybe_short and self._shorts.get(video_key):
+            self._count_video(key, True, False)
+            if state.state == STATE_PLAYING:
+                self._pause(player, video, None)
+            self._publish(
+                player,
+                PlayerStatus(
+                    STATUS_BLOCKED,
+                    title,
+                    channel,
+                    age,
+                    block_reason=BLOCK_SHORT,
+                    list_state=list_state,
+                    short=True,
+                ),
+            )
+            return
+        skip = listed and self.setting(player, SETTING_SKIP_CHECKS)
+        if maybe_short:
+            if skip or key in self._ratings:
+                # Rated before Shorts were recognized, or no rating needed.
+                self._ensure_format(video_key, video)
+            else:
+                self._ensure_rated(key, video_key, video)
+            if self._shorts.get(video_key):
+                # The eagerly started lookup already found a Short.
+                self._evaluate(player)
+                return
+        if skip:
             self._count_video(key, False, False)
             self._publish(
                 player,
@@ -490,7 +700,7 @@ class Monitor:
                 ),
             )
             return
-        self._ensure_rated(key, video)
+        self._ensure_rated(key, video_key, video)
         # Background tasks start eagerly, so the rating may exist by now.
         rating = self._ratings.get(key)
         if rating is None and key in self._pending:

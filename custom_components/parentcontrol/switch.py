@@ -52,7 +52,8 @@ class CheckSwitch(SwitchEntity):
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the check off."""
+        """Turn the check off; needs the PIN."""
+        await self._monitor.lock.async_authorize(self._context, loosens=True)
         self._monitor.async_set_enabled(False)
         self.async_write_ha_state()
 
@@ -84,10 +85,15 @@ class PlayerSettingSwitch(SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Set the checkbox."""
-        self._monitor.async_set_setting(self._player, self._setting, True)
-        self.async_write_ha_state()
+        await self._async_set(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Clear the checkbox."""
-        self._monitor.async_set_setting(self._player, self._setting, False)
+        await self._async_set(False)
+
+    async def _async_set(self, value: bool) -> None:
+        await self._monitor.lock.async_authorize(
+            self._context, loosens=self._monitor.loosens_setting(self._setting, value)
+        )
+        self._monitor.async_set_setting(self._player, self._setting, value)
         self.async_write_ha_state()

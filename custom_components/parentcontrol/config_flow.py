@@ -22,14 +22,20 @@ from .const import (
     CONF_MODEL,
     CONF_OLLAMA_URL,
     CONF_PEDAGOGY_PROMPT,
+    CONF_PIN,
+    CONF_PIN_HASH,
     CONF_PLAYERS,
     DEFAULT_OLLAMA_URL,
     DOMAIN,
     MAX_AGE,
 )
+from .pinlock import hash_pin, valid_pin
 
 TIMEOUT = aiohttp.ClientTimeout(total=10)
 PROMPT_SELECTOR = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
+PIN_SELECTOR = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
 AGE_SELECTOR = selector.NumberSelector(
     selector.NumberSelectorConfig(
         min=0, max=MAX_AGE, step=1, mode=selector.NumberSelectorMode.SLIDER
@@ -102,21 +108,27 @@ class ParentControlConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Ask for model, players and age."""
+        """Ask for model, players, age and the PIN."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            if user_input[CONF_PLAYERS]:
+            if not user_input[CONF_PLAYERS]:
+                errors["base"] = "no_players"
+            elif not valid_pin(user_input[CONF_PIN]):
+                errors[CONF_PIN] = "invalid_pin"
+            else:
+                pin_hash = await self.hass.async_add_executor_job(hash_pin, user_input[CONF_PIN])
                 return self.async_create_entry(
                     title="ParentControl",
                     data={CONF_OLLAMA_URL: self._url, CONF_AGE: int(user_input[CONF_AGE])},
                     options={
                         CONF_MODEL: user_input[CONF_MODEL],
                         CONF_PLAYERS: user_input[CONF_PLAYERS],
+                        CONF_PIN_HASH: pin_hash,
                     },
                 )
-            errors["base"] = "no_players"
         fields = _player_fields(self._models, None, [])
         fields[vol.Required(CONF_AGE, default=6)] = AGE_SELECTOR
+        fields[vol.Required(CONF_PIN)] = PIN_SELECTOR
         return self.async_show_form(
             step_id="settings", data_schema=vol.Schema(fields), errors=errors
         )
@@ -136,19 +148,32 @@ class ParentControlOptionsFlow(OptionsFlow):
         self._open_players: list[str] = []
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Ask for model and players."""
+        """Ask for model, players and optionally a new PIN."""
         errors: dict[str, str] = {}
         current = self.config_entry.options
         if user_input is not None:
-            if user_input[CONF_PLAYERS]:
+            pin = user_input.pop(CONF_PIN, "")
+            if not user_input[CONF_PLAYERS]:
+                errors["base"] = "no_players"
+            elif pin and not valid_pin(pin):
+                errors[CONF_PIN] = "invalid_pin"
+            else:
                 self._options = user_input
+                self._options[CONF_PIN_HASH] = (
+                    await self.hass.async_add_executor_job(hash_pin, pin)
+                    if pin
+                    else current.get(CONF_PIN_HASH)
+                )
                 return await self.async_step_ages()
-            errors["base"] = "no_players"
         try:
             models = await _async_models(self.hass, self.config_entry.data[CONF_OLLAMA_URL])
         except (aiohttp.ClientError, TimeoutError, ValueError, KeyError):
             models = [current[CONF_MODEL]]
         fields = _player_fields(models, current[CONF_MODEL], current[CONF_PLAYERS])
+        # Empty keeps the PIN; an entry without one needs it now.
+        fields[vol.Optional(CONF_PIN) if current.get(CONF_PIN_HASH) else vol.Required(CONF_PIN)] = (
+            PIN_SELECTOR
+        )
         return self.async_show_form(step_id="init", data_schema=vol.Schema(fields), errors=errors)
 
     async def async_step_ages(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

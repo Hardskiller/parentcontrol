@@ -8,10 +8,12 @@ Home Assistant integration that estimates a minimum age for running YouTube vide
 
 - Monitors any number of media players
 - Minimum age from 0 to 18, with a default age and an optional age per device
-- Optional per device: jump to the start, educational videos only, block swear words, strict rating
+- Optional per device: jump to the start, educational videos only, block swear words, strict rating, block Shorts
+- PIN lock: without the PIN, users without admin rights cannot weaken the protection
 - Allowed and blocked channels, globally and per device, with an optional minimum age
 - Editable prompts for the age rating and the educational rating
-- Watch time per device and daily video statistics
+- Watch time per device, the latest 20 videos per device, and daily video statistics
+- Warnings when Ollama or the YouTube lookup stop working
 - Runs on any Home Assistant installation that supports HACS
 
 ## Requirements
@@ -25,7 +27,7 @@ Home Assistant integration that estimates a minimum age for running YouTube vide
 1. In HACS, open **⋮ → Custom repositories** and add `https://github.com/Hardskiller/parentcontrol` as type **Integration**.
 2. Download **ParentControl** and restart Home Assistant. Home Assistant installs `yt-dlp` automatically.
 3. Go to **Settings → Devices & services → Add integration** and select **ParentControl**.
-4. Enter the Ollama address, model, media players, and default age.
+4. Enter the Ollama address, model, media players, default age, and a PIN with 4 to 8 digits.
 
 ## Usage
 
@@ -34,7 +36,9 @@ These apply to all devices:
 - **Default age:** used by every device without an age of its own.
 - **Check:** switch that turns the check off for all devices.
 - **Videos, Approved, Educational, and Skipped today:** count each video once per day. The `gesamt` attribute holds the count since installation.
-- **Integration options:** model, device selection, age per device, and the editable prompts. After a prompt change, videos are checked again.
+- **Integration options:** model, device selection, PIN, age per device, and the editable prompts. After a prompt change, videos are checked again. Only admins can open them.
+- **Settings:** lock that guards the settings, see [PIN lock](#pin-lock).
+- **Ollama and YouTube lookup:** show whether both services work. After 10 minutes of failure, Home Assistant shows a warning under **Settings → Repairs**.
 
 Each monitored player appears as its own device under ParentControl, with these entities:
 
@@ -42,11 +46,22 @@ Each monitored player appears as its own device under ParentControl, with these 
 - **Educational only:** also blocks age-appropriate videos without learning value. When off, the rating is only shown.
 - **Block swear words:** also blocks age-appropriate videos, for example music videos. Detection uses a word list on the full transcript and the model. Without subtitles the model only sees title and description, so lyrics can go unnoticed.
 - **Strict rating:** blocks videos without subtitles and videos whose check failed, for example when Ollama is unreachable. This also hits many harmless videos, especially music.
+- **Block Shorts:** pauses every YouTube Short, also from allowed channels. On by default.
 - **Allowed channels skip all checks:** when on, an allowed channel plays without any check. When off, it is still checked for age and swear words, but missing subtitles and missing educational value don't block it.
 - **YouTube check:** shows status, title, minimum age, ratings, and reasons.
+- **Age:** the age of this device. It shows the default age until you change it.
 - **Watch time today:** counts the minutes the device is playing, in any app.
+- **Latest videos:** the newest title as state, the latest 20 videos in the `videos` attribute with time, channel, decision, reasons, and markers for educational value, swear words, and Shorts.
 
-Anyone with access to the dashboard can change these switches.
+## PIN lock
+
+The **Settings** lock decides who may weaken the protection. While it is locked, users without admin rights cannot turn a check off, raise an age, allow a channel, or take a channel off the blocked list. Making the protection stricter always works: turning a check on, lowering an age, or blocking a channel.
+
+Unlock it with the PIN on the lock. It stays open for 5 minutes, and every change starts the 5 minutes again. Locking it again needs no PIN. After 5 wrong PINs, no PIN is accepted for 15 minutes, and every further lockout lasts twice as long. Every wrong PIN appears in the logbook and fires the `parentcontrol_pin_failed` event, for example for a notification.
+
+Admins and automations are not affected by the lock. The PIN is stored only as a hash; if you forget it, set a new one in the integration options.
+
+Home Assistant cannot hide states from users. Everyone who is logged in can read statuses and the latest videos.
 
 If a video fails the check, it is paused. The integration checks this every 3 seconds while the video keeps playing and fires the `parentcontrol_paused` event.
 
@@ -63,7 +78,7 @@ Names must match completely, ignoring case, spaces, and symbols. Both lists coun
 
 The allowed list starts with well-known German children's channels. Their ages are estimates, not official ratings, and you can change or delete every line.
 
-Two actions change the lists without opening the options: `parentcontrol.allow_channel` and `parentcontrol.block_channel`. Each moves a channel from the opposite list. Without `channel` they use the channel running on `player`, which makes a dashboard button easy:
+Three actions change the lists without opening the options: `parentcontrol.allow_channel` and `parentcontrol.block_channel` move a channel from the opposite list, and `parentcontrol.remove_channel` takes it off the list given in `list` (`allowed` or `blocked`). Allowing a channel and taking it off the blocked list need the PIN. Without `channel` they use the channel running on `player`, which makes a dashboard button easy:
 
 ```yaml
 type: button
@@ -84,7 +99,7 @@ The integration finds the video by title, channel, and duration, loads the descr
 
 - The minimum age is an estimate by a language model, not an official age rating. It can be wrong.
 - Only text is checked, not the picture.
-- The start of a video always plays unchecked until title and rating are available.
+- The start of a video always plays unchecked until title and rating are available. This also applies to Shorts: each Short starts before it is recognized, and the next one starts again after a swipe. Only YouTube itself can hide Shorts completely, for example with a supervised account.
 - Without strict rating, a video keeps playing when Ollama fails or no data is available.
 - Only monitored media players are covered. Browsers on laptops, phones, tablets, and game consoles can bypass the check. The Home Assistant app on iPhone doesn't report what other apps play.
 - Fetching data with `yt-dlp` isn't intended by YouTube and can stop working at any time.

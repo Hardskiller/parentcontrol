@@ -30,3 +30,23 @@ block_channel:
       default: false
       selector:
         boolean:
+remove_channel:
+  fields:
+    list:
+      required: true
+      selector:
+        select:
+          options:
+            - allowed
+            - blocked
+    channel:
+      selector:
+        text:
+    player:
+      selector:
+        entity:
+          domain: media_player
+    only_this_device:
+      default: false
+      selector:
+        boolean:

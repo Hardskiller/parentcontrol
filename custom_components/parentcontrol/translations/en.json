@@ -10,18 +10,20 @@
       },
       "settings": {
         "title": "Set up the check",
-        "description": "The rating comes from a language model and is not an official age rating.",
+        "description": "The rating comes from a language model and is not an official age rating. Adults open the settings on the dashboard with the PIN; without it, users without admin rights cannot weaken the protection.",
         "data": {
           "model": "Model",
           "players": "Monitored media players",
-          "age": "Default age"
+          "age": "Default age",
+          "pin": "PIN (4 to 8 digits)"
         }
       }
     },
     "error": {
       "cannot_connect": "The Ollama server cannot be reached.",
       "no_models": "No model is installed on the Ollama server.",
-      "no_players": "Select at least one media player."
+      "no_players": "Select at least one media player.",
+      "invalid_pin": "The PIN must have 4 to 8 digits."
     },
     "abort": {
       "single_instance_allowed": "ParentControl is already set up."
@@ -33,7 +35,8 @@
         "title": "Change the check",
         "data": {
           "model": "Model",
-          "players": "Monitored media players"
+          "players": "Monitored media players",
+          "pin": "New PIN (leave empty to keep it)"
         }
       },
       "ages": {
@@ -67,13 +70,17 @@
     },
     "error": {
       "no_players": "Select at least one media player.",
-      "invalid_age": "The allowed list contains an invalid age. Use 0 to 18."
+      "invalid_age": "The allowed list contains an invalid age. Use 0 to 18.",
+      "invalid_pin": "The PIN must have 4 to 8 digits."
     }
   },
   "entity": {
     "number": {
       "age": {
         "name": "Default age"
+      },
+      "device_age": {
+        "name": "Age"
       }
     },
     "switch": {
@@ -94,6 +101,9 @@
       },
       "skip_checks": {
         "name": "Allowed channels skip all checks"
+      },
+      "block_shorts": {
+        "name": "Block Shorts"
       }
     },
     "sensor": {
@@ -123,6 +133,22 @@
       },
       "watch_time": {
         "name": "Watch time today"
+      },
+      "history": {
+        "name": "Latest videos"
+      }
+    },
+    "lock": {
+      "settings": {
+        "name": "Settings"
+      }
+    },
+    "binary_sensor": {
+      "ollama": {
+        "name": "Ollama"
+      },
+      "yt_dlp": {
+        "name": "YouTube lookup"
       }
     }
   },
@@ -166,6 +192,52 @@
           "description": "Adds the channel to the device list instead of the global list."
         }
       }
+    },
+    "remove_channel": {
+      "name": "Remove channel",
+      "description": "Removes a channel from the allowed or blocked list. Removing it from the blocked list needs the PIN.",
+      "fields": {
+        "list": {
+          "name": "List",
+          "description": "allowed for the allowed list, blocked for the blocked list."
+        },
+        "channel": {
+          "name": "Channel",
+          "description": "Channel name. Empty uses the channel running on the media player."
+        },
+        "player": {
+          "name": "Media player",
+          "description": "Provides the running channel and the device for the device list."
+        },
+        "only_this_device": {
+          "name": "Only this device",
+          "description": "Adds the channel to the device list instead of the global list."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "locked": {
+      "message": "ParentControl is locked. Enter the PIN on the Settings lock first."
+    },
+    "wrong_pin": {
+      "message": "Wrong PIN."
+    },
+    "pin_blocked": {
+      "message": "Too many wrong attempts. The PIN is blocked for {minutes} more minutes."
+    },
+    "no_pin": {
+      "message": "No PIN is set. An admin sets it in the integration options."
+    }
+  },
+  "issues": {
+    "ollama_down": {
+      "title": "Ollama is unreachable",
+      "description": "ParentControl has not reached the Ollama server for at least 10 minutes. Videos are not rated; without strict rating they keep playing."
+    },
+    "yt_dlp_down": {
+      "title": "YouTube lookup fails",
+      "description": "yt-dlp has found no video data for at least 10 minutes. YouTube may have changed something; an update of ParentControl or yt-dlp can help."
     }
   }
 }

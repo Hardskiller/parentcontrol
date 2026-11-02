@@ -161,4 +161,13 @@ def test_source_names_the_best_available_data():
 
 def test_yt_dlp_failure_falls_back_to_empty_metadata():
     with patch.object(engine, "_extract", side_effect=RuntimeError("kaputt")):
-        assert engine.fetch_metadata(Video("T")) == Metadata()
+        assert engine.fetch_metadata(Video("T")) == Metadata(failed=True)
+
+
+def test_shorts_are_recognized_by_their_media_type():
+    search = {"entries": [{"id": "abc", "title": "T", "duration": 30}]}
+    info = {"media_type": "short", "description": "d"}
+    with patch.object(engine, "_extract", side_effect=[search, info]):
+        meta = engine.fetch_metadata(Video("T", duration=30))
+    assert meta.short
+    assert meta.video_id == "abc"
