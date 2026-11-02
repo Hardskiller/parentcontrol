@@ -70,6 +70,17 @@ Wissen macht Ah!; 7
 logo!; 8
 Terra Kids; 8"""
 
+# Mild words children hear everywhere; every line can be changed or deleted.
+DEFAULT_ALLOWED_WORDS = """blöd*
+idiot*
+doof*
+dumm*
+quatsch*
+mist*
+depp*
+trottel*
+kacke"""
+
 # Reasons come before the decisions, so the model thinks before it answers.
 RATING_SCHEMA = {
     "type": "object",

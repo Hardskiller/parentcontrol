@@ -1168,11 +1168,16 @@ class ParentControlCardEditor extends HTMLElement {
   }
 }
 
-customElements.define("parentcontrol-card", ParentControlCard);
-customElements.define("parentcontrol-card-editor", ParentControlCardEditor);
+// The card may arrive twice, as dashboard resource and as extra script.
+if (!customElements.get("parentcontrol-card")) {
+  customElements.define("parentcontrol-card", ParentControlCard);
+  customElements.define("parentcontrol-card-editor", ParentControlCardEditor);
+}
 window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "parentcontrol-card",
-  name: "ParentControl",
-  description: "Devices, PIN, profiles, settings and history of ParentControl.",
-});
+if (!window.customCards.some((card) => card.type === "parentcontrol-card")) {
+  window.customCards.push({
+    type: "parentcontrol-card",
+    name: "ParentControl",
+    description: "Devices, PIN, profiles, settings and history of ParentControl.",
+  });
+}

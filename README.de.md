@@ -110,7 +110,15 @@ Zustände kann Home Assistant vor Benutzern nicht verbergen. Jeder Angemeldete k
 
 ## Dashboard-Karte
 
-Die Integration bringt eine eigene Karte mit und lädt sie auf jedem Dashboard, ein zusätzlicher Download ist nicht nötig. Du fügst sie im Dashboard-Editor unter **ParentControl** hinzu oder per YAML:
+Die Integration bringt eine eigene Karte mit, ein zusätzlicher Download ist nicht nötig. Sie trägt die Karte unter **Einstellungen → Dashboards → Ressourcen** ein und hält dort die Version aktuell, damit Dashboards vor dem Zeichnen auf sie warten. Dashboards im YAML-Modus brauchen die Ressource stattdessen in ihrer Konfiguration:
+
+```yaml
+resources:
+  - url: /parentcontrol/parentcontrol-card.js
+    type: module
+```
+
+Du fügst die Karte im Dashboard-Editor unter **ParentControl** hinzu oder per YAML:
 
 ```yaml
 type: custom:parentcontrol-card
@@ -151,7 +159,7 @@ Namen müssen vollständig passen, ohne Rücksicht auf Groß- und Kleinschreibun
 
 Die globale Freigabeliste startet mit bekannten deutschen Kinderkanälen. Die Alterswerte sind Schätzungen, keine offiziellen Freigaben, und du kannst jede Zeile ändern oder löschen.
 
-**Erlaubte Schimpfwörter:** Ein Wort gilt als ganzes Wort, ohne Rücksicht auf Groß- und Kleinschreibung. `Mist*` erlaubt alle Wörter, die mit „Mist“ beginnen. Wörter, die YouTube als `[ __ ]` zensiert hat, lassen sich nie erlauben. Meldet das Modell Schimpfwörter, ohne sie zu nennen, bleibt das Video gesperrt.
+**Erlaubte Schimpfwörter:** Ein Wort gilt als ganzes Wort, ohne Rücksicht auf Groß- und Kleinschreibung. `Mist*` erlaubt alle Wörter, die mit „Mist“ beginnen. Die globale Liste startet mit milden Wörtern, die Kinder überall hören: `blöd*`, `idiot*`, `doof*`, `dumm*`, `quatsch*`, `mist*`, `depp*`, `trottel*` und `kacke`. Jede Zeile lässt sich ändern oder löschen. Beim Update werden diese Standardwerte einmalig eingetragen, wenn die Liste noch leer ist. Wörter, die YouTube als `[ __ ]` zensiert hat, lassen sich nie erlauben. Meldet das Modell Schimpfwörter, ohne sie zu nennen, bleibt das Video gesperrt.
 
 Diese Aktionen ändern die Listen ohne die Optionen. Ohne `profile` ändern sie die Listen für alle Kinder:
 

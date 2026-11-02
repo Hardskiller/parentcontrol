@@ -14,7 +14,9 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.loader import async_get_integration
 
+from . import engine
 from .const import (
+    CONF_ALLOWED_WORDS,
     CONF_NAME,
     CONF_PIN_HASH,
     DEVICE_SETTINGS,
@@ -137,6 +139,34 @@ def entity_ids(
     return {role: entity_id for role, entity_id in found.items() if entity_id}
 
 
+async def _async_register_resource(hass: HomeAssistant, url: str | None) -> bool:
+    """Keep the card in the Lovelace resources; None removes it.
+
+    Dashboards wait for these resources before they draw cards. A script
+    added any other way can arrive too late, and the card then stays an error.
+    Returns False when the dashboards are in YAML mode.
+    """
+    # Imported here, because tests run without the frontend.
+    from homeassistant.components.lovelace.const import LOVELACE_DATA  # noqa: PLC0415
+
+    data = hass.data.get(LOVELACE_DATA)
+    if data is None or data.resource_mode != "storage":
+        return False
+    resources = data.resources
+    await resources.async_get_info()
+    for item in list(resources.async_items()):
+        if item["url"].split("?")[0] != CARD_URL:
+            continue
+        if url is None:
+            await resources.async_delete_item(item["id"])
+        elif item["url"] != url:
+            await resources.async_update_item(item["id"], {"res_type": "module", "url": url})
+        return True
+    if url is not None:
+        await resources.async_create_item({"res_type": "module", "url": url})
+    return True
+
+
 async def _async_register_card(hass: HomeAssistant) -> None:
     """Serve the dashboard card and load it on every dashboard."""
     if hass.http is None or "frontend" not in hass.config.components:
@@ -153,7 +183,10 @@ async def _async_register_card(hass: HomeAssistant) -> None:
         [StaticPathConfig(CARD_URL, str(CARD_FILE), cache_headers=False)]
     )
     version = (await async_get_integration(hass, DOMAIN)).version
-    add_extra_js_url(hass, f"{CARD_URL}?v={version}")
+    url = f"{CARD_URL}?v={version}"
+    if not await _async_register_resource(hass, url):
+        # YAML dashboards: load it on every page; the README explains the resource.
+        add_extra_js_url(hass, url)
 
 
 def device_info(entry: ConfigEntry) -> DeviceInfo:
@@ -202,6 +235,17 @@ def _remove_stale_devices(hass: HomeAssistant, entry: ConfigEntry, monitor: Moni
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         if not any(domain == DOMAIN and ident in expected for domain, ident in device.identifiers):
             registry.async_remove_device(device.id)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Bring older entries up to date."""
+    if entry.version == 1 and entry.minor_version < 2:
+        # An empty word list only meant that there were no defaults yet.
+        options = {**entry.options}
+        if not options.get(CONF_ALLOWED_WORDS):
+            options[CONF_ALLOWED_WORDS] = engine.DEFAULT_ALLOWED_WORDS
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ParentControlConfigEntry) -> bool:
@@ -316,8 +360,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ParentControlConfigEntr
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ParentControlConfigEntry) -> None:
-    """Forget the lock state."""
+    """Forget the lock state and take the card out of the dashboard resources."""
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    if "lovelace" in hass.config.components:
+        await _async_register_resource(hass, None)
 
 
 async def _async_reload(hass: HomeAssistant, entry: ParentControlConfigEntry) -> None:

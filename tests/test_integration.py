@@ -1023,20 +1023,20 @@ async def test_card_finds_every_entity_through_the_attributes(hass, pauses):
 
 async def test_swear_word_block_logs_the_words_that_triggered_it(hass, pauses):
     entry, _, patcher = await setup(
-        hass, min_age=4, profanity=True, words=["Scheiße", "Mist"], settings=[SETTING_BLOCK_PROFANITY]
+        hass, min_age=4, profanity=True, words=["Scheiße", "Arsch"], settings=[SETTING_BLOCK_PROFANITY]
     )
     paused = []
     hass.bus.async_listen("parentcontrol_paused", paused.append)
     await play(hass)
-    text = "Schimpfwörter erkannt: Scheiße, Mist."
+    text = "Schimpfwörter erkannt: Scheiße, Arsch."
     assert hass.states.get(SENSOR).attributes["sperrtext"] == text
-    assert hass.states.get(SENSOR).attributes["schimpfwoerter_liste"] == ["Scheiße", "Mist"]
+    assert hass.states.get(SENSOR).attributes["schimpfwoerter_liste"] == ["Scheiße", "Arsch"]
     video = hass.states.get(HISTORY).attributes["videos"][0]
     assert video["sperrtext"] == text
-    assert video["schimpfwoerter_liste"] == ["Scheiße", "Mist"]
+    assert video["schimpfwoerter_liste"] == ["Scheiße", "Arsch"]
     assert paused[0].data["block_text"] == text
-    assert paused[0].data["swear_words"] == ["Scheiße", "Mist"]
-    assert entry.runtime_data._events[-1]["swear_words"] == ["Scheiße", "Mist"]
+    assert paused[0].data["swear_words"] == ["Scheiße", "Arsch"]
+    assert entry.runtime_data._events[-1]["swear_words"] == ["Scheiße", "Arsch"]
     patcher.stop()
 
 
@@ -1058,11 +1058,11 @@ async def test_blocked_channel_has_a_text_without_a_rating(hass, pauses):
 
 
 async def test_allowed_video_has_no_block_text(hass, pauses):
-    _, _, patcher = await setup(hass, min_age=4, profanity=True, words=["Mist"])
+    _, _, patcher = await setup(hass, min_age=4, profanity=True, words=["Arsch"])
     await play(hass)
     state = hass.states.get(SENSOR)
     assert state.attributes["sperrtext"] is None
-    assert state.attributes["schimpfwoerter_liste"] == ["Mist"]
+    assert state.attributes["schimpfwoerter_liste"] == ["Arsch"]
     patcher.stop()
 
 
@@ -1287,8 +1287,8 @@ async def test_profile_without_inherited_words_blocks_global_words(hass, pauses)
 
 async def test_word_must_be_allowed_for_every_child_on_a_shared_device(hass, pauses):
     _, _, patcher = await setup_shared(
-        hass, min_age=4, profanity=True, words=["Mist"],
-        settings=[SETTING_BLOCK_PROFANITY], **{CONF_PROFILE_WORDS: {GROSS: "Mist"}},
+        hass, min_age=4, profanity=True, words=["Arsch"],
+        settings=[SETTING_BLOCK_PROFANITY], **{CONF_PROFILE_WORDS: {GROSS: "Arsch"}},
     )
     await play(hass)
     assert len(pauses) == 1
@@ -1689,3 +1689,82 @@ async def test_waiting_entries_are_cleared_after_a_restart(hass, pauses):
     assert entry.runtime_data.history(TV)[0]["status"] in ("nicht_geprueft", "blockiert", "frei")
     assert all(video["status"] != "wird_geprueft" for video in entry.runtime_data.history(TV)[1:])
     patcher.stop()
+
+
+async def test_default_words_are_allowed_without_options(hass, pauses):
+    _, _, patcher = await setup(
+        hass, min_age=4, profanity=True, words=["Blöde", "Idiot"], settings=[SETTING_BLOCK_PROFANITY]
+    )
+    await play(hass)
+    assert not pauses
+    assert "doof*" in hass.states.get(LOCK).attributes["erlaubte_woerter"]
+    patcher.stop()
+
+
+async def test_older_entry_with_an_empty_word_list_gets_the_defaults(hass, pauses):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=1,
+        minor_version=1,
+        data={CONF_OLLAMA_URL: "http://ollama.local"},
+        options={
+            CONF_MODEL: "m",
+            CONF_PLAYERS: [TV],
+            CONF_PIN_HASH: PIN_HASH,
+            CONF_PROFILES: profiles(),
+            CONF_DEVICE_PROFILES: {TV: [KIND]},
+            CONF_ALLOWED_WORDS: "",
+        },
+    )
+    entry.add_to_hass(hass)
+    with patch.object(engine, "fetch_metadata", return_value=engine.Metadata()):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.minor_version == 2
+    assert entry.options[CONF_ALLOWED_WORDS] == engine.DEFAULT_ALLOWED_WORDS
+
+
+async def test_older_entry_keeps_its_own_word_list(hass, pauses):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=1,
+        minor_version=1,
+        data={CONF_OLLAMA_URL: "http://ollama.local"},
+        options={
+            CONF_MODEL: "m",
+            CONF_PLAYERS: [TV],
+            CONF_PIN_HASH: PIN_HASH,
+            CONF_PROFILES: profiles(),
+            CONF_DEVICE_PROFILES: {TV: [KIND]},
+            CONF_ALLOWED_WORDS: "Mist",
+        },
+    )
+    entry.add_to_hass(hass)
+    with patch.object(engine, "fetch_metadata", return_value=engine.Metadata()):
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.options[CONF_ALLOWED_WORDS] == "Mist"
+
+
+async def test_card_becomes_a_versioned_dashboard_resource(hass):
+    from homeassistant.setup import async_setup_component
+    from homeassistant.components.lovelace.const import LOVELACE_DATA
+    from custom_components.parentcontrol import _async_register_resource
+
+    assert await async_setup_component(hass, "lovelace", {})
+    resources = hass.data[LOVELACE_DATA].resources
+    await resources.async_create_item({"res_type": "module", "url": "/other/card.js"})
+    assert await _async_register_resource(hass, "/parentcontrol/parentcontrol-card.js?v=1")
+    assert await _async_register_resource(hass, "/parentcontrol/parentcontrol-card.js?v=2")
+    urls = [item["url"] for item in resources.async_items()]
+    assert urls == ["/other/card.js", "/parentcontrol/parentcontrol-card.js?v=2"]
+    await _async_register_resource(hass, None)
+    assert [item["url"] for item in resources.async_items()] == ["/other/card.js"]
+
+
+async def test_yaml_dashboards_keep_their_resources(hass):
+    from homeassistant.setup import async_setup_component
+    from custom_components.parentcontrol import _async_register_resource
+
+    assert await async_setup_component(hass, "lovelace", {"lovelace": {"resource_mode": "yaml"}})
+    assert not await _async_register_resource(hass, "/parentcontrol/parentcontrol-card.js?v=1")

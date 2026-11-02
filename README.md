@@ -110,7 +110,15 @@ Home Assistant cannot hide states from users. Everyone who is logged in can read
 
 ## Dashboard card
 
-The integration brings its own card and loads it on every dashboard; no extra download is needed. Add it in the dashboard editor under **ParentControl**, or with YAML:
+The integration brings its own card; no extra download is needed. It adds the card to the dashboard resources under **Settings → Dashboards → Resources** and keeps its version up to date there, so dashboards wait for it before drawing. Dashboards in YAML mode need the resource in their configuration instead:
+
+```yaml
+resources:
+  - url: /parentcontrol/parentcontrol-card.js
+    type: module
+```
+
+Add the card in the dashboard editor under **ParentControl**, or with YAML:
 
 ```yaml
 type: custom:parentcontrol-card
@@ -151,7 +159,7 @@ Names must match completely, ignoring case, spaces, and symbols. A block always 
 
 The global allowed list starts with well-known German children's channels. Their ages are estimates, not official ratings, and you can change or delete every line.
 
-**Allowed swear words:** a word matches as a whole word, ignoring case. `Mist*` allows every word that starts with "Mist". Words that YouTube censored as `[ __ ]` can never be allowed. If the model reports swear words without naming them, the video stays blocked.
+**Allowed swear words:** a word matches as a whole word, ignoring case. `Mist*` allows every word that starts with "Mist". The global list starts with mild words children hear everywhere: `blöd*`, `idiot*`, `doof*`, `dumm*`, `quatsch*`, `mist*`, `depp*`, `trottel*`, and `kacke`. You can change or delete every line. On an update, these defaults are added once if the list is still empty. Words that YouTube censored as `[ __ ]` can never be allowed. If the model reports swear words without naming them, the video stays blocked.
 
 These actions change the lists without opening the options. Without `profile` they change the lists for all children:
 

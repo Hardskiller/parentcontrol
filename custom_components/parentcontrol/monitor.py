@@ -568,7 +568,7 @@ class Monitor:
         options = self.entry.options
         global_allowed = options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
         global_blocked = options.get(CONF_BLOCKED, "")
-        global_words = options.get(CONF_ALLOWED_WORDS, "")
+        global_words = options.get(CONF_ALLOWED_WORDS, engine.DEFAULT_ALLOWED_WORDS)
         members = tuple(
             profile_rules(
                 self.profile_age(pid),
@@ -598,7 +598,7 @@ class Monitor:
         else:
             allowed = options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
             blocked = options.get(CONF_BLOCKED, "")
-            words = options.get(CONF_ALLOWED_WORDS, "")
+            words = options.get(CONF_ALLOWED_WORDS, engine.DEFAULT_ALLOWED_WORDS)
         return {
             "freigegeben": engine.list_entries(allowed, with_age=True),
             "gesperrt": engine.list_entries(blocked, with_age=False),
@@ -618,7 +618,7 @@ class Monitor:
             texts = {
                 LIST_ALLOWED: options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS),
                 LIST_BLOCKED: options.get(CONF_BLOCKED, ""),
-                LIST_WORDS: options.get(CONF_ALLOWED_WORDS, ""),
+                LIST_WORDS: options.get(CONF_ALLOWED_WORDS, engine.DEFAULT_ALLOWED_WORDS),
             }
         return options, texts
 

@@ -130,6 +130,8 @@ class ParentControlConfigFlow(ConfigFlow, domain=DOMAIN):
     """Asks for the Ollama server, model, players, PIN and the first child."""
 
     VERSION = 1
+    # 2: allowed swear words got default values.
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         self._url = DEFAULT_OLLAMA_URL
@@ -378,7 +380,7 @@ class ParentControlOptionsFlow(OptionsFlow):
             data_schema=_list_form(
                 current.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS),
                 current.get(CONF_BLOCKED, ""),
-                current.get(CONF_ALLOWED_WORDS, ""),
+                current.get(CONF_ALLOWED_WORDS, engine.DEFAULT_ALLOWED_WORDS),
             ),
             errors=errors,
         )
