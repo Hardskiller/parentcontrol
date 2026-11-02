@@ -10,6 +10,7 @@ Home Assistant integration that estimates a minimum age for running YouTube vide
 - Minimum age from 0 to 18, with a default age and an optional age per device
 - Optional per device: jump to the start, educational videos only, block swear words, strict rating, block Shorts
 - PIN lock: without the PIN, users without admin rights cannot weaken the protection
+- Dashboard card with device list, PIN pad, settings, channel lists, and history
 - Allowed and blocked channels, globally and per device, with an optional minimum age
 - Editable prompts for the age rating and the educational rating
 - Watch time per device, the latest 20 videos per device, and daily video statistics
@@ -51,7 +52,7 @@ Each monitored player appears as its own device under ParentControl, with these 
 - **YouTube check:** shows status, title, minimum age, ratings, and reasons.
 - **Age:** the age of this device. It shows the default age until you change it.
 - **Watch time today:** counts the minutes the device is playing, in any app.
-- **Latest videos:** the newest title as state, the latest 20 videos in the `videos` attribute with time, channel, decision, reasons, and markers for educational value, swear words, and Shorts.
+- **Latest videos:** the newest title as state, the latest 20 videos in the `videos` attribute with time, channel, decision, reasons, and markers for educational value, swear words, and Shorts. Every blocked video has a `sperrtext` that names the trigger. For swear words it lists the words found, in `schimpfwoerter_liste` as well.
 
 ## PIN lock
 
@@ -63,7 +64,23 @@ Admins and automations are not affected by the lock. The PIN is stored only as a
 
 Home Assistant cannot hide states from users. Everyone who is logged in can read statuses and the latest videos.
 
-If a video fails the check, it is paused. The integration checks this every 3 seconds while the video keeps playing and fires the `parentcontrol_paused` event.
+If a video fails the check, it is paused. The integration checks this every 3 seconds while the video keeps playing and fires the `parentcontrol_paused` event with `block_reason`, `block_text`, and `swear_words`. The logbook shows the same text. Swear words come from the word list over the full transcript and from the model, which names the words it found.
+
+## Dashboard card
+
+The integration brings its own card and loads it on every dashboard; no extra download is needed. Add it in the dashboard editor under **ParentControl**, or with YAML:
+
+```yaml
+type: custom:parentcontrol-card
+```
+
+Without the PIN, the card only shows the device list: status, age, watch time, the running title, and markers for educational videos and swear words. Tapping a device, **History**, or **General** asks for the PIN first. Then you see:
+
+- **Device:** the current video with its reasons, the age, all switches, the channel lists of this device, and its latest videos
+- **History:** the latest videos of all devices, each with buttons to allow or block its channel
+- **General:** the check switch, the default age, the lists for all devices, today's statistics, and the state of Ollama and the YouTube lookup
+
+When the lock closes again, the card returns to the device list. Admins see everything without a PIN. Optional settings are `title` and `entity`, the lock entity, if it can't be found automatically.
 
 ## Channel lists
 

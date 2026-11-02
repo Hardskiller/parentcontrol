@@ -20,9 +20,11 @@ def async_describe_events(
     def describe_paused(event: Event) -> dict[str, str]:
         age = event.data.get("min_age")
         suffix = f" (ab {age})" if age is not None else ""
+        text = event.data.get("block_text")
+        reason = f": {text}" if text else ""
         return {
             LOGBOOK_ENTRY_NAME: "ParentControl",
-            LOGBOOK_ENTRY_MESSAGE: f"hat „{event.data.get('title')}“ pausiert{suffix}",
+            LOGBOOK_ENTRY_MESSAGE: f"hat „{event.data.get('title')}“ pausiert{suffix}{reason}",
         }
 
     @callback

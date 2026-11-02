@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import ParentControlConfigEntry, device_info, player_device_info
+from . import ParentControlConfigEntry, device_info, entity_ids, player_device_info, player_name
 from .const import STATS, STATUSES
 
 
@@ -55,11 +55,13 @@ class StatusSensor(ParentControlSensor):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = STATUSES
     _attr_translation_key = "status"
+    _unrecorded_attributes = frozenset({"entitaeten", "freigegeben", "gesperrt"})
 
     def __init__(
         self, hass: HomeAssistant, entry: ParentControlConfigEntry, player: str
     ) -> None:
         super().__init__(entry)
+        self._entry = entry
         self._player = player
         self._attr_unique_id = f"{entry.entry_id}_{player}"
         self._attr_device_info = player_device_info(hass, entry, player)
@@ -79,8 +81,12 @@ class StatusSensor(ParentControlSensor):
             "kanal": status.channel,
             "alter": status.age,
             "sperrgrund": status.block_reason,
+            "sperrtext": status.block_text,
             "liste": status.list_state,
             "short": status.short,
+            "name": player_name(self.hass, self._player),
+            "entitaeten": entity_ids(self.hass, self._entry, self._player),
+            **self._monitor.channel_lists(self._player),
         }
         if status.rating:
             attributes |= {
@@ -89,6 +95,7 @@ class StatusSensor(ParentControlSensor):
                 "paedagogisch_wertvoll": status.rating.valuable,
                 "paedagogik_grund": status.rating.pedagogy_reason,
                 "schimpfwoerter": status.rating.profanity,
+                "schimpfwoerter_liste": status.rating.profanity_words,
                 "quelle": status.rating.source,
                 "video_id": status.rating.video_id,
             }

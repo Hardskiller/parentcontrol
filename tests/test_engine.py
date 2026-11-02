@@ -73,7 +73,7 @@ def test_parse_rating_accepts_any_age_in_range():
         '{"mindestalter": 9, "grund": "ok", "paedagogisch_wertvoll": true, '
         '"paedagogik_grund": "lehrreich", "enthaelt_schimpfwoerter": true}'
     )
-    assert engine.parse_rating(content) == (9, "ok", True, "lehrreich", True)
+    assert engine.parse_rating(content) == (9, "ok", True, "lehrreich", True, [])
 
 
 def test_word_list_finds_swear_words_the_model_missed():
@@ -171,3 +171,40 @@ def test_shorts_are_recognized_by_their_media_type():
         meta = engine.fetch_metadata(Video("T", duration=30))
     assert meta.short
     assert meta.video_id == "abc"
+
+
+def test_list_entries_keep_the_written_names():
+    assert engine.list_entries("Die Maus; 5\n\nlogo!", with_age=True) == [
+        {"kanal": "Die Maus", "alter": 5},
+        {"kanal": "logo!", "alter": 0},
+    ]
+    assert engine.list_entries("Böser Kanal", with_age=False) == [{"kanal": "Böser Kanal"}]
+
+
+def test_found_swear_words_come_from_the_transcript_and_the_model():
+    answer = ANSWER.replace(
+        '"enthaelt_schimpfwoerter": false',
+        '"enthaelt_schimpfwoerter": true, "gefundene_schimpfwoerter": ["Mist", "scheiße"]',
+    )
+    meta = Metadata(transcript="So eine Scheiße [ __ ] und nochmal scheiße")
+    with (
+        patch.object(engine, "fetch_metadata", return_value=meta),
+        patch.object(engine, "ask_ollama", return_value=answer),
+    ):
+        rating = engine.rate(Video("T"), "u", "m", "s")
+    assert rating.profanity
+    assert rating.profanity_words == ["Scheiße", "[ __ ]", "Mist"]
+
+
+def test_model_words_are_ignored_when_it_finds_no_swearing():
+    answer = ANSWER.replace(
+        '"enthaelt_schimpfwoerter": false',
+        '"enthaelt_schimpfwoerter": false, "gefundene_schimpfwoerter": ["Mist"]',
+    )
+    with (
+        patch.object(engine, "fetch_metadata", return_value=Metadata()),
+        patch.object(engine, "ask_ollama", return_value=answer),
+    ):
+        rating = engine.rate(Video("T"), "u", "m", "s")
+    assert not rating.profanity
+    assert rating.profanity_words == []

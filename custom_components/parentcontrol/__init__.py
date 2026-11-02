@@ -1,17 +1,24 @@
 """ParentControl: rates running YouTube videos and pauses unsuitable ones."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.loader import async_get_integration
 
 from .const import (
     CONF_PIN_HASH,
     DOMAIN,
+    HEALTH,
+    SETTINGS,
+    STATS,
     MAX_AGE,
     SERVICE_ALLOW_CHANNEL,
     SERVICE_BLOCK_CHANNEL,
@@ -47,7 +54,57 @@ REMOVE_SCHEMA = SERVICE_SCHEMA.extend(
     {vol.Required(ATTR_LIST): vol.In([LIST_ALLOWED, LIST_BLOCKED])}
 )
 
+CARD_URL = f"/{DOMAIN}/{DOMAIN}-card.js"
+CARD_FILE = Path(__file__).parent / "frontend" / f"{DOMAIN}-card.js"
+
 type ParentControlConfigEntry = ConfigEntry[Monitor]
+
+
+def entity_ids(hass: HomeAssistant, entry: ConfigEntry, player: str | None = None) -> dict[str, str]:
+    """Map the roles of the entities to their entity ids, for the card."""
+    if player:
+        prefix = f"{entry.entry_id}_{player}"
+        roles = {
+            "status": ("sensor", prefix),
+            "watch_time": ("sensor", f"{prefix}_watch_time"),
+            "history": ("sensor", f"{prefix}_history"),
+            "age": ("number", f"{prefix}_age"),
+            **{setting: ("switch", f"{prefix}_{setting}") for setting in SETTINGS},
+        }
+    else:
+        prefix = entry.entry_id
+        roles = {
+            "lock": ("lock", f"{prefix}_settings_lock"),
+            "check": ("switch", f"{prefix}_check"),
+            "age": ("number", f"{prefix}_age"),
+            **{stat: ("sensor", f"{prefix}_{stat}") for stat in STATS},
+            **{name: ("binary_sensor", f"{prefix}_{name}_health") for name in HEALTH},
+        }
+    registry = er.async_get(hass)
+    found = {
+        role: registry.async_get_entity_id(domain, DOMAIN, unique_id)
+        for role, (domain, unique_id) in roles.items()
+    }
+    return {role: entity_id for role, entity_id in found.items() if entity_id}
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the dashboard card and load it on every dashboard."""
+    if hass.http is None or "frontend" not in hass.config.components:
+        return
+    # Imported here, because tests run without the frontend.
+    from homeassistant.components.frontend import add_extra_js_url  # noqa: PLC0415
+    from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
+
+    flags = hass.data.setdefault(f"{DOMAIN}_card", {})
+    if flags.get("registered"):
+        return
+    flags["registered"] = True
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(CARD_URL, str(CARD_FILE), cache_headers=False)]
+    )
+    version = (await async_get_integration(hass, DOMAIN)).version
+    add_extra_js_url(hass, f"{CARD_URL}?v={version}")
 
 
 def device_info(entry: ConfigEntry) -> DeviceInfo:
@@ -89,6 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ParentControlConfigEntry
     monitor.async_start()
     entry.async_on_unload(monitor.async_stop)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
+    await _async_register_card(hass)
 
     async def async_list_channel(call: ServiceCall) -> None:
         """Add a channel, by default the one running on the given player."""

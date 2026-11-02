@@ -1,14 +1,22 @@
 {
   "domain": "parentcontrol",
   "name": "ParentControl",
-  "codeowners": ["@Hardskiller"],
+  "after_dependencies": [
+    "frontend",
+    "http"
+  ],
+  "codeowners": [
+    "@Hardskiller"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/Hardskiller/parentcontrol",
   "integration_type": "service",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Hardskiller/parentcontrol/issues",
-  "requirements": ["yt-dlp>=2026.7.4"],
+  "requirements": [
+    "yt-dlp>=2026.7.4"
+  ],
   "single_config_entry": true,
-  "version": "0.3.2"
+  "version": "0.3.3"
 }

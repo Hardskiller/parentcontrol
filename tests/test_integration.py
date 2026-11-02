@@ -90,7 +90,7 @@ def quiet_health_check(aioclient_mock):
     aioclient_mock.get("http://ollama.local/api/tags", json={"models": [{"name": "m"}]})
 
 
-async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, **options):
+async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, valuable=False, profanity=False, source="untertitel", settings=(), short=False, meta_failed=False, words=(), **options):
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={CONF_OLLAMA_URL: "http://ollama.local", CONF_AGE: age},
@@ -103,7 +103,9 @@ async def setup(hass, min_age=16, age=8, device_ages=None, side_effect=None, val
         },
     )
     entry.add_to_hass(hass)
-    rating = engine.Rating(min_age, "Grund", source, "id", valuable, "Lehrreich", profanity)
+    rating = engine.Rating(
+        min_age, "Grund", source, "id", valuable, "Lehrreich", profanity, list(words)
+    )
     rate_patcher = patch.object(
         engine, "rate", side_effect=side_effect, return_value=rating
     )
@@ -906,4 +908,67 @@ async def test_failed_lookup_turns_the_yt_dlp_sensor_off(hass, pauses):
     _, _, patcher = await setup(hass, meta_failed=True)
     await play(hass)
     assert hass.states.get("binary_sensor.parentcontrol_youtube_lookup").state == "off"
+    patcher.stop()
+
+
+async def test_card_finds_every_entity_through_the_attributes(hass, pauses):
+    _, _, patcher = await setup(hass, **{CONF_DEVICE_ALLOWED: {TV: "Kanal; 6"}})
+    lock = hass.states.get(LOCK).attributes
+    assert lock["entitaeten"]["lock"] == LOCK
+    assert lock["entitaeten"]["check"] == SWITCH
+    assert lock["entitaeten"]["ollama"] == OLLAMA
+    assert lock["geraete"] == [SENSOR, "sensor.parentcontrol_kids_youtube_check"]
+    assert {"kanal": "Die Maus", "alter": 5} in lock["freigegeben"]
+    device = hass.states.get(SENSOR).attributes
+    assert device["entitaeten"]["block_shorts"] == SHORTS_SWITCH
+    assert device["entitaeten"]["age"] == TV_AGE
+    assert device["entitaeten"]["history"] == HISTORY
+    assert device["freigegeben"] == [{"kanal": "Kanal", "alter": 6}]
+    assert device["gesperrt"] == []
+    assert device["name"] == "tv"
+    patcher.stop()
+
+
+async def test_swear_word_block_logs_the_words_that_triggered_it(hass, pauses):
+    entry, _, patcher = await setup(
+        hass, min_age=4, profanity=True, words=["Scheiße", "Mist"], settings=[SETTING_BLOCK_PROFANITY]
+    )
+    paused = []
+    hass.bus.async_listen("parentcontrol_paused", paused.append)
+    await play(hass)
+    text = "Schimpfwörter erkannt: Scheiße, Mist."
+    assert hass.states.get(SENSOR).attributes["sperrtext"] == text
+    assert hass.states.get(SENSOR).attributes["schimpfwoerter_liste"] == ["Scheiße", "Mist"]
+    video = hass.states.get(HISTORY).attributes["videos"][0]
+    assert video["sperrtext"] == text
+    assert video["schimpfwoerter_liste"] == ["Scheiße", "Mist"]
+    assert paused[0].data["block_text"] == text
+    assert paused[0].data["swear_words"] == ["Scheiße", "Mist"]
+    assert entry.runtime_data._events[-1]["swear_words"] == ["Scheiße", "Mist"]
+    patcher.stop()
+
+
+async def test_every_block_reason_has_a_text(hass, pauses):
+    _, _, patcher = await setup(hass, min_age=12, age=8)
+    await play(hass)
+    assert hass.states.get(SENSOR).attributes["sperrtext"] == (
+        "Mindestalter 12 liegt über dem Alter 8. Grund"
+    )
+    patcher.stop()
+
+
+async def test_blocked_channel_has_a_text_without_a_rating(hass, pauses):
+    _, _, patcher = await setup(hass, **{CONF_BLOCKED: "Kanal"})
+    await play(hass)
+    video = hass.states.get(HISTORY).attributes["videos"][0]
+    assert video["sperrtext"] == "Der Kanal steht auf der Sperrliste."
+    patcher.stop()
+
+
+async def test_allowed_video_has_no_block_text(hass, pauses):
+    _, _, patcher = await setup(hass, min_age=4, profanity=True, words=["Mist"])
+    await play(hass)
+    state = hass.states.get(SENSOR)
+    assert state.attributes["sperrtext"] is None
+    assert state.attributes["schimpfwoerter_liste"] == ["Mist"]
     patcher.stop()

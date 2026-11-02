@@ -6,7 +6,7 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
@@ -108,6 +108,32 @@ class PlayerStatus:
     block_reason: str | None = None
     list_state: str | None = None
     short: bool = False
+    block_text: str | None = None
+
+
+def block_text(reason: str | None, age: int | None, rating: engine.Rating | None) -> str | None:
+    """Explain a block in one sentence; for swear words with the words found."""
+    if reason is None:
+        return None
+    if reason == BLOCK_AGE and rating:
+        text = f"Mindestalter {rating.min_age} liegt über dem Alter {age}."
+        return f"{text} {rating.reason}".strip()
+    if reason == BLOCK_PROFANITY:
+        words = rating.profanity_words if rating else []
+        if words:
+            return f"Schimpfwörter erkannt: {', '.join(words)}."
+        return "Schimpfwörter erkannt, vom Modell ohne einzelne Wörter gemeldet."
+    if reason == BLOCK_PEDAGOGY:
+        return f"Nicht pädagogisch wertvoll. {rating.pedagogy_reason if rating else ''}".strip()
+    return BLOCK_TEXTS.get(reason, reason)
+
+
+BLOCK_TEXTS = {
+    BLOCK_CHANNEL: "Der Kanal steht auf der Sperrliste.",
+    BLOCK_SHORT: "Shorts sind auf diesem Gerät gesperrt.",
+    BLOCK_NO_SUBTITLES: "Strenge Bewertung: Ohne Untertitel ist keine sichere Einstufung möglich.",
+    BLOCK_UNCHECKED: "Strenge Bewertung: Die Prüfung ist fehlgeschlagen.",
+}
 
 
 class Monitor:
@@ -208,6 +234,20 @@ class Monitor:
     def device_age(self, player: str) -> int:
         """Return the age that applies to a player."""
         return self._device_ages.get(player, self.age)
+
+    def channel_lists(self, player: str | None = None) -> dict[str, list[dict]]:
+        """Return the allowed and blocked list of a player or of all devices."""
+        options = self.entry.options
+        if player:
+            allowed = options.get(CONF_DEVICE_ALLOWED, {}).get(player, "")
+            blocked = options.get(CONF_DEVICE_BLOCKED, {}).get(player, "")
+        else:
+            allowed = options.get(CONF_ALLOWED, engine.DEFAULT_ALLOWED_CHANNELS)
+            blocked = options.get(CONF_BLOCKED, "")
+        return {
+            "freigegeben": engine.list_entries(allowed, with_age=True),
+            "gesperrt": engine.list_entries(blocked, with_age=False),
+        }
 
     def history(self, player: str) -> list[dict]:
         """Return the latest videos of a player, newest first."""
@@ -435,7 +475,9 @@ class Monitor:
         }
 
     @callback
-    def _log_event(self, event: str, video: engine.Video, rating: dict | None) -> None:
+    def _log_event(
+        self, event: str, video: engine.Video, rating: dict | None, text: str | None = None
+    ) -> None:
         self._events.append(
             {
                 "at": time.time(),
@@ -444,6 +486,8 @@ class Monitor:
                 "channel": video.channel,
                 "min_age": rating["min_age"] if rating else None,
                 "reason": rating["reason"] if rating else None,
+                "block_text": text,
+                "swear_words": rating.get("profanity_words", []) if rating else [],
             }
         )
         del self._events[:-MAX_EVENTS]
@@ -451,6 +495,9 @@ class Monitor:
 
     @callback
     def _publish(self, player: str, status: PlayerStatus) -> None:
+        status = replace(
+            status, block_text=block_text(status.block_reason, status.age, status.rating)
+        )
         if self._statuses.get(player) != status:
             self._statuses[player] = status
             self._record(player, status)
@@ -469,10 +516,12 @@ class Monitor:
             "kanal": status.channel,
             "status": status.status,
             "sperrgrund": status.block_reason,
+            "sperrtext": status.block_text,
             "mindestalter": rating.min_age if rating else None,
             "grund": rating.reason if rating else None,
             "paedagogisch_wertvoll": rating.valuable if rating else None,
             "schimpfwoerter": rating.profanity if rating else None,
+            "schimpfwoerter_liste": rating.profanity_words if rating else [],
             "short": status.short,
         }
         if history and (history[0]["titel"], history[0]["kanal"]) == (status.title, status.channel):
@@ -568,23 +617,35 @@ class Monitor:
                 _LOGGER.debug("%s auf %s fehlgeschlagen: %s", service, player, err)
 
     @callback
-    def _pause(self, player: str, video: engine.Video, rating: dict | None) -> None:
+    def _pause(
+        self,
+        player: str,
+        video: engine.Video,
+        rating: dict | None,
+        reason: str,
+        age: int,
+    ) -> None:
         # A player reports several updates per play, each must not count twice.
         now = time.monotonic()
         if now - self._last_pause.get(player, -PAUSE_DEBOUNCE_SECONDS) < PAUSE_DEBOUNCE_SECONDS:
             return
         self._last_pause[player] = now
         self.hass.async_create_task(self._async_stop_video(player))
-        self._log_event("pausiert", video, rating)
+        text = block_text(reason, age, engine.Rating(**rating) if rating else None)
+        self._log_event("pausiert", video, rating, text)
         self.hass.bus.async_fire(
             EVENT_PAUSED,
             {
                 "entity_id": player,
                 "title": video.title,
+                "channel": video.channel,
                 "min_age": rating["min_age"] if rating else None,
+                "block_reason": reason,
+                "block_text": text,
+                "swear_words": rating.get("profanity_words", []) if rating else [],
             },
         )
-        _LOGGER.info("Pausiert auf %s: %r", player, video.title)
+        _LOGGER.info("Pausiert auf %s: %r (%s)", player, video.title, text)
 
     def _is_blocked_channel(self, player: str, channel: str) -> bool:
         return channel in self._blocked or channel in self._device_blocked.get(player, set())
@@ -639,7 +700,7 @@ class Monitor:
         if self._is_blocked_channel(player, normalized_channel):
             self._count_video(key, True, False)
             if state.state == STATE_PLAYING:
-                self._pause(player, video, None)
+                self._pause(player, video, None, BLOCK_CHANNEL, age)
             self._publish(
                 player,
                 PlayerStatus(
@@ -661,7 +722,7 @@ class Monitor:
         if maybe_short and self._shorts.get(video_key):
             self._count_video(key, True, False)
             if state.state == STATE_PLAYING:
-                self._pause(player, video, None)
+                self._pause(player, video, None, BLOCK_SHORT, age)
             self._publish(
                 player,
                 PlayerStatus(
@@ -715,7 +776,7 @@ class Monitor:
         if rating is None:
             self._count_video(key, True, False)
             if state.state == STATE_PLAYING:
-                self._pause(player, video, None)
+                self._pause(player, video, None, BLOCK_UNCHECKED, age)
             self._publish(
                 player,
                 PlayerStatus(STATUS_BLOCKED, title, channel, age, block_reason=BLOCK_UNCHECKED),
@@ -724,7 +785,7 @@ class Monitor:
         block_reason = self._block_reason(player, rating, age, listed)
         self._count_video(key, block_reason is not None, rating.get("valuable", False))
         if block_reason and state.state == STATE_PLAYING:
-            self._pause(player, video, rating)
+            self._pause(player, video, rating, block_reason, age)
         self._publish(
             player,
             PlayerStatus(

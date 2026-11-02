@@ -10,6 +10,7 @@ Home-Assistant-Integration, die laufende YouTube-Videos mit einem lokalen Ollama
 - Mindestalter von 0 bis 18, mit Standardalter und optional eigenem Alter pro Gerät
 - Optional pro Gerät: an den Anfang springen, nur pädagogisch wertvolle Videos, Schimpfwörter blockieren, strenge Bewertung, Shorts sperren
 - PIN-Schloss: Ohne PIN können Benutzer ohne Adminrechte den Schutz nicht lockern
+- Dashboard-Karte mit Geräteliste, PIN-Feld, Einstellungen, Kanallisten und Verlauf
 - Freigegebene und gesperrte Kanäle, global und pro Gerät, optional mit Mindestalter
 - Editierbare Prompts für Alterseinstufung und pädagogische Bewertung
 - Schauzeit pro Gerät, die letzten 20 Videos pro Gerät und tägliche Videostatistik
@@ -51,7 +52,7 @@ Jedes überwachte Gerät erscheint als eigenes Gerät unter ParentControl. Dort 
 - **YouTube-Prüfung:** zeigt Status, Titel, Mindestalter, Bewertungen und Begründungen.
 - **Alter:** das Alter dieses Geräts. Es zeigt das Standardalter, bis du es änderst.
 - **Schauzeit heute:** zählt die Minuten, in denen das Gerät abspielt, mit jeder App.
-- **Letzte Videos:** der neueste Titel als Zustand, die letzten 20 Videos im Attribut `videos` mit Uhrzeit, Kanal, Entscheidung, Begründungen und Kennzeichen für pädagogischen Wert, Schimpfwörter und Shorts.
+- **Letzte Videos:** der neueste Titel als Zustand, die letzten 20 Videos im Attribut `videos` mit Uhrzeit, Kanal, Entscheidung, Begründungen und Kennzeichen für pädagogischen Wert, Schimpfwörter und Shorts. Jedes gesperrte Video hat einen `sperrtext`, der den Auslöser nennt. Bei Schimpfwörtern stehen dort die gefundenen Wörter, zusätzlich in `schimpfwoerter_liste`.
 
 ## PIN-Schloss
 
@@ -63,7 +64,23 @@ Admins und Automationen betrifft das Schloss nicht. Der PIN wird nur als Hash ge
 
 Zustände kann Home Assistant vor Benutzern nicht verbergen. Jeder Angemeldete kann Status und die letzten Videos lesen.
 
-Fällt ein Video durch die Prüfung, wird es pausiert. Die Integration prüft das alle 3 Sekunden, solange das Video weiterläuft, und löst das Event `parentcontrol_paused` aus.
+Fällt ein Video durch die Prüfung, wird es pausiert. Die Integration prüft das alle 3 Sekunden, solange das Video weiterläuft, und löst das Event `parentcontrol_paused` mit `block_reason`, `block_text` und `swear_words` aus. Im Logbuch steht derselbe Text. Die Schimpfwörter stammen aus der Wortliste über das ganze Transkript und vom Modell, das die gefundenen Wörter nennt.
+
+## Dashboard-Karte
+
+Die Integration bringt eine eigene Karte mit und lädt sie auf jedem Dashboard, ein zusätzlicher Download ist nicht nötig. Du fügst sie im Dashboard-Editor unter **ParentControl** hinzu oder per YAML:
+
+```yaml
+type: custom:parentcontrol-card
+```
+
+Ohne PIN zeigt die Karte nur die Geräteliste: Status, Alter, Schauzeit, den laufenden Titel und Symbole für pädagogisch wertvolle Videos und Schimpfwörter. Ein Tipp auf ein Gerät, auf **Verlauf** oder **Allgemein** fragt zuerst nach dem PIN. Danach siehst du:
+
+- **Gerät:** das laufende Video mit Begründungen, das Alter, alle Schalter, die Kanallisten dieses Geräts und seine letzten Videos
+- **Verlauf:** die letzten Videos aller Geräte, jeweils mit Knöpfen, um den Kanal freizugeben oder zu sperren
+- **Allgemein:** den Schalter „Prüfung“, das Standardalter, die Listen für alle Geräte, die Statistik von heute und den Zustand von Ollama und der YouTube-Abfrage
+
+Schließt das Schloss wieder, springt die Karte zur Geräteliste zurück. Admins sehen alles ohne PIN. Optional sind `title` und `entity`, die Schloss-Entität, falls sie nicht automatisch gefunden wird.
 
 ## Kanallisten
 

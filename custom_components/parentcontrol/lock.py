@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import ParentControlConfigEntry, device_info
+from . import ParentControlConfigEntry, device_info, entity_ids
 from .const import PIN_PATTERN
 
 
@@ -27,8 +27,11 @@ class SettingsLock(LockEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_translation_key = "settings"
+    _unrecorded_attributes = frozenset({"entitaeten", "geraete", "freigegeben", "gesperrt"})
 
     def __init__(self, entry: ParentControlConfigEntry) -> None:
+        self._entry = entry
+        self._monitor = entry.runtime_data
         self._lock = entry.runtime_data.lock
         self._attr_unique_id = f"{entry.entry_id}_settings_lock"
         self._attr_device_info = device_info(entry)
@@ -55,6 +58,12 @@ class SettingsLock(LockEntity):
         return {
             "offen_sekunden": self._lock.open_seconds,
             "gesperrt_sekunden": self._lock.blocked_seconds,
+            "entitaeten": entity_ids(self.hass, self._entry),
+            "geraete": [
+                entity_ids(self.hass, self._entry, player).get("status")
+                for player in self._monitor.players
+            ],
+            **self._monitor.channel_lists(),
         }
 
     async def async_unlock(self, **kwargs: Any) -> None:
